@@ -1,0 +1,16 @@
+{
+  "name": "claude-status-bar",
+  "owner": { "name": "Mick Cesanek" },
+  "description": "Menu bar status indicator for Claude Code.",
+  "plugins": [
+    {
+      "name": "claude-status-bar",
+      "displayName": "Claude Status Bar",
+      "source": "./",
+      "description": "Menu bar indicator for Claude Code: animated spark, elapsed timer, and open/close lifecycle.",
+      "version": "0.0.1",
+      "homepage": "https://github.com/m1ckc3s/claude-status-bar",
+      "license": "MIT"
+    }
+  ]
+}
