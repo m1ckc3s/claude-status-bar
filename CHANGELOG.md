@@ -3,6 +3,12 @@
 All notable changes to Claude Status Bar are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-06-25
+
+### Fixed
+- Edge case where closing the app (or the Claude desktop app) mid-animation left the menu bar stuck. On reopen it would still show the old "thinking" state with the timer climbing, because a force-quit fires no Stop hook. The status now resets to the idle resting icon when the owning session ends or resumes.
+- The menu bar no longer parks on "Waiting for you" after a turn. Claude Code's CLI sends an idle notification ("Claude is waiting for your input") when a session sits idle, and the app was turning that into a persistent label. Now only permission notifications affect the icon, so it simply rests when idle.
+
 ## [0.2.0] - 2026-06-25
 
 ### Added
@@ -62,6 +68,7 @@ All notable changes to Claude Status Bar are documented here. This project follo
 - Signed and notarized DMG so it opens without a Gatekeeper warning.
 - Claude Code plugin marketplace manifest for the plugin install path.
 
+[0.2.1]: https://github.com/m1ckc3s/claude-status-bar/releases/tag/v0.2.1
 [0.2.0]: https://github.com/m1ckc3s/claude-status-bar/releases/tag/v0.2.0
 [0.1.0]: https://github.com/m1ckc3s/claude-status-bar/releases/tag/v0.1.0
 [0.0.5]: https://github.com/m1ckc3s/claude-status-bar/releases/tag/v0.0.5

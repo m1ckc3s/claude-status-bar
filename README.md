@@ -15,6 +15,12 @@ Signed and notarized. Open it, drag the app to Applications, launch once.
 <img width="1016" height="566" alt="Claude Status Bar demo" src="https://github.com/user-attachments/assets/55a7b294-e893-4f73-b16b-b8beef784400" />
 <img width="656" height="883" alt="Screenshot 2026-06-25 at 5 27 42 AM" src="https://github.com/user-attachments/assets/7a164fda-ea23-434f-a13a-18ad7bcb1b25" />
 
+> [!IMPORTANT]
+> **Multi-session support.** This is built for one active Claude Code session at a time. If you
+> run multiple sessions at once (several terminals, or a terminal plus the desktop app), the menu
+> bar follows the most recently active one. Here is the why, and how you can add it yourself:
+> **[read the story →](https://github.com/m1ckc3s/claude-status-bar/issues/8)**
+
 ---
 
 ## What it shows

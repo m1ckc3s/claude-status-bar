@@ -67,22 +67,18 @@ process.stdin.on("end", () => {
       if (!startedAt) startedAt = ts;
       break;
     case "notify": {
+      // Only a permission prompt drives the icon here (CLI path; desktop uses permreq). Ignore
+      // every other Notification (esp. the idle_prompt "Claude is waiting for your input") so the
+      // icon rests instead of parking on a confusing "Waiting for you". See CLAUDE.md.
       const m = (p.message || "").toLowerCase();
-      if (m.includes("permission") || m.includes("approve") || m.includes("allow")) {
-        state = "permission"; label = "Awaiting permission";
-      } else if (m.includes("waiting")) {
-        state = "waiting"; label = "Waiting for you";
-      } else {
-        state = "waiting"; label = p.message || "Waiting";
-      }
-      startedAt = 0;
+      const isPerm = p.notification_type === "permission_prompt" ||
+        m.includes("permission") || m.includes("approve") || m.includes("allow");
+      if (!isPerm) return;
+      state = "permission"; label = "Awaiting permission"; startedAt = 0;
       break;
     }
     case "permreq":
-      // PermissionRequest fires the instant the approval dialog is shown, in BOTH the
-      // CLI and the Desktop app (unlike Notification, which is CLI-only). Fires ~30ms
-      // after `pre` so it correctly overrides the running state with the dot. On approve,
-      // `post` clears it; on deny nothing fires, so the next prompt/tool/stop clears it.
+      // Desktop-app permission signal; not redundant with notify (that's CLI-only). See CLAUDE.md.
       state = "permission"; label = "Awaiting permission"; startedAt = 0; break;
     case "stop":
       state = "done"; label = "Done"; startedAt = 0; break;
