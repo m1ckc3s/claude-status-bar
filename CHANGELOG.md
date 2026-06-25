@@ -3,6 +3,11 @@
 All notable changes to Claude Status Bar are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-06-25
+
+### Added
+- **Awaiting-permission dot now works in the Claude desktop app**, not just the terminal CLI. Previously the yellow "awaiting permission" dot only appeared in the CLI, because the only signal we had (the `Notification` hook) never fires for permission prompts in the desktop app. The app now also listens to Claude Code's `PermissionRequest` hook, which fires the moment an approval dialog is shown in both the CLI and the desktop app, so the dot lights up the instant Claude is waiting on you to approve a tool.
+
 ## [0.1.0] - 2026-06-22
 
 ### Added
@@ -57,6 +62,7 @@ All notable changes to Claude Status Bar are documented here. This project follo
 - Signed and notarized DMG so it opens without a Gatekeeper warning.
 - Claude Code plugin marketplace manifest for the plugin install path.
 
+[0.2.0]: https://github.com/m1ckc3s/claude-status-bar/releases/tag/v0.2.0
 [0.1.0]: https://github.com/m1ckc3s/claude-status-bar/releases/tag/v0.1.0
 [0.0.5]: https://github.com/m1ckc3s/claude-status-bar/releases/tag/v0.0.5
 [0.0.4]: https://github.com/m1ckc3s/claude-status-bar/releases/tag/v0.0.4

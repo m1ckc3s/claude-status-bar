@@ -26,7 +26,7 @@ Signed and notarized. Open it, drag the app to Applications, launch once.
 
 - **Thinking / working** — the icon animates, with a live `1m 1s` timer.
 - **Running a tool** — a short label (`Editing`, `Reading`, `Running command`, `Using tool`, …).
-- **Awaiting permission** — a paused yellow dot (CLI only, see below).
+- **Awaiting permission** — a paused yellow dot, in both the CLI and the Desktop app.
 - **Idle / done** — rests on the Claude logo.
 
 Everything is controlled from the menu:
@@ -50,9 +50,9 @@ Everything is controlled from the menu:
 | Claude Desktop — **Chat** tab | ❌ |
 | **Cowork** | ❌ |
 
-### Permission detection is CLI-only
+### Awaiting-permission dot
 
-🟡 The "Awaiting permission" dot only fires in the CLI. The Desktop app handles permission prompts in-window and doesn't emit the notification hook, so the dot won't show there.
+🟡 As of 0.2.0 the yellow "Awaiting permission" dot fires in both the CLI and the Desktop app. It lights up the moment Claude is waiting for you to approve a tool, via Claude Code's `PermissionRequest` hook. (On auto, accept-edits, or bypass permission modes there are no prompts, so the dot never needs to show.)
 
 ## Requirements
 

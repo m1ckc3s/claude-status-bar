@@ -264,10 +264,15 @@ final class StatusController: NSObject, NSMenuDelegate {
         let age = Date().timeIntervalSince1970 - ts
 
         var eff = state
-        // The Stop hook fires on normal completion, but NOT when you interrupt (Esc/Stop).
-        // In that case Claude Code appends a "[Request interrupted by user]" line to the
-        // transcript and the turn ends — detect that so we don't stay stuck on "thinking".
-        if state == "thinking" || state == "tool" {
+        // The Stop hook fires on normal completion, but NOT when you interrupt (Esc/Stop) OR
+        // deny a permission prompt. In both cases Claude Code appends a "[Request interrupted
+        // by user ...]" line to the transcript and the turn ends with NO further hook, so
+        // state.json freezes — on the bare icon ("thinking"/"tool") or, worse, stuck on the
+        // amber "awaiting permission" dot. Deny fires no hook at all (verified via the hook
+        // monitor, see CLAUDE.md), so the transcript is the only signal; recover off it.
+        // Safe for a still-pending prompt: until you decide, the transcript's last line is the
+        // assistant tool-use message, not the interrupt marker, so the dot holds.
+        if state == "thinking" || state == "tool" || state == "permission" {
             if age > 900 { eff = "idle"; label = "" } // absolute safety net
             else if let tr = current["transcript"] as? String,
                     let last = lastLine(ofFileAt: tr),

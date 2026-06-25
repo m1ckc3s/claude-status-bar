@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Invoked by Claude Code hooks. Reads the hook JSON payload on stdin, maps the
 // event to a status, and atomically writes ~/.claude/statusbar/state.json.
-// Usage: node update.js <prompt|pre|post|notify|stop>
+// Usage: node update.js <prompt|pre|post|notify|permreq|stop>
 
 const fs = require("fs");
 const os = require("os");
@@ -78,6 +78,12 @@ process.stdin.on("end", () => {
       startedAt = 0;
       break;
     }
+    case "permreq":
+      // PermissionRequest fires the instant the approval dialog is shown, in BOTH the
+      // CLI and the Desktop app (unlike Notification, which is CLI-only). Fires ~30ms
+      // after `pre` so it correctly overrides the running state with the dot. On approve,
+      // `post` clears it; on deny nothing fires, so the next prompt/tool/stop clears it.
+      state = "permission"; label = "Awaiting permission"; startedAt = 0; break;
     case "stop":
       state = "done"; label = "Done"; startedAt = 0; break;
     default:

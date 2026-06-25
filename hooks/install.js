@@ -60,6 +60,7 @@ addUnmatched("UserPromptSubmit", cmd("prompt"));
 addMatched("PreToolUse", cmd("pre"));
 addMatched("PostToolUse", cmd("post"));
 addUnmatched("Notification", cmd("notify"));
+addMatched("PermissionRequest", cmd("permreq"));
 addUnmatched("Stop", cmd("stop"));
 // Lifecycle hooks (launch the app on open; the app quits itself when no longer needed)
 addUnmatched("SessionStart", life("start"));
