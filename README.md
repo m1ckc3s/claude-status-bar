@@ -8,12 +8,10 @@
 
 A tiny macOS menu bar app that shows **Claude Code's live status**: an animated Claude icon while it's thinking or running a tool, a yellow dot when it's awaiting your permission, and the elapsed time of the current turn. Lightweight, no window, no dock icon, no usage dashboards.
 
-_Built so you can tab away during a long "thinking" stretch and still see, at a glance, whether Claude is working, waiting on you, or done._
+> Built so you can tab away during a long "thinking" stretch and still see, at a glance, whether Claude is working, waiting on you, or done._
 
-Signed and notarized. Open it, drag the app to Applications, launch once.
-
-<img width="813" height="453" alt="Claude Status Bar demo" src="https://github.com/user-attachments/assets/55a7b294-e893-4f73-b16b-b8beef784400" />
-<img width="459" height="618" alt="Screenshot 2026-06-25 at 5 27 42 AM" src="https://github.com/user-attachments/assets/7a164fda-ea23-434f-a13a-18ad7bcb1b25" />
+<img width="710" height="714" alt="Screen Recording 2026-06-25 at 12 16 50 PM" src="https://github.com/user-attachments/assets/68df52f8-9c0e-41a5-83f3-0b8449073055" />
+<br>
 
 > [!IMPORTANT]
 > **Multi-session support.** This is built for one active Claude Code session at a time. If you
@@ -35,7 +33,7 @@ Everything is controlled from the menu:
 - **Show timer:** toggle the elapsed `1m 1s` clock.
 - **Play completion sound:** a soft chime when a turn longer than a minute finishes (off by default).
 - **Animation style:**
-  - **Claude**, the web "morph" spark
+  - **Claude Spark**, the web/chat "morph" spark
   - **Claude Code**, the terminal glyph spinner
   - **Crab Walking**, a pixel-art Clawd crab that scuttles while Claude works
 - **Icon color:** **Orange** or **System** (adaptive black/white). The Claude and Claude Code styles follow this setting; Crab Walking is always its orange pixel-art self.
@@ -51,19 +49,17 @@ Everything is controlled from the menu:
 | Claude Desktop — **Chat** tab | ❌ |
 | **Cowork** | ❌ |
 
-### Awaiting-permission dot
-
-🟡 As of 0.2.0 the yellow "Awaiting permission" dot fires in both the CLI and the Desktop app. It lights up the moment Claude is waiting for you to approve a tool, via Claude Code's `PermissionRequest` hook. (On auto, accept-edits, or bypass permission modes there are no prompts, so the dot never needs to show.)
-
 ## Requirements
 
 - macOS 12+
 - [Claude Code](https://claude.com/claude-code) (CLI or the Desktop app)
-- Node.js (used by the hook scripts)
+- Node.js
 
 ## Install
 
-### Option A — DMG (recommended)
+### Option A — DMG (recommended) 
+
+Signed and notarized. Open it, drag the app to Applications, launch once.
 
 1. Download the latest `ClaudeStatusBar.dmg` from [Releases](../../releases).
 2. Open it and drag **Claude Status Bar** into Applications.
@@ -72,7 +68,8 @@ Everything is controlled from the menu:
 
 ### Updating
 
-Download the latest DMG and drag it into Applications (choose **Replace**). Launch it once, it refreshes its hooks on a version change, then restart Claude Code to pick them up.
+Download the latest DMG and drag it into Applications (choose **Replace**). 
+Launch it once, it refreshes its hooks on a version change, then restart Claude Code to pick them up.
 
 ### Option B — Claude Code plugin
 
@@ -98,11 +95,11 @@ node "/Applications/ClaudeStatusBar.app/Contents/Resources/uninstall.js"   # rem
 ```
 Then drag the app to the Trash.
 
-## Trademark / not affiliated
+## Trademark / Not Affiliated
 
 This is an unofficial, open-source side project. **It is not affiliated with, endorsed by, or sponsored by Anthropic.** "Claude" and the Claude spark logo are trademarks of Anthropic, used here nominatively. This project is MIT licensed, but that covers the source code only and conveys no rights to Anthropic's trademarks or brand.
 
-If I'm violating or impeding your trademark, DM me on X ([@mickces](https://x.com/mickces)) and I'll rename this repo. 
+If I'm violating or impeding your trademark, Contact me on X Chat ([@mickces](https://x.com/mickces))
 This is a free side project; I'm not monetizing it.
 
 ## License
