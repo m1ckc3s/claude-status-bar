@@ -278,19 +278,66 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     // MARK: state polling
 
+    let staleSessionAfter: TimeInterval = 900 // a crashed session's frozen state must not win forever
+
+    // Keep the bar narrow: over `max` characters, show the first `keep` plus an ellipsis.
+    // The full text always remains in the hover tooltip.
+    func truncated(_ s: String, max: Int = 20, keep: Int = 18) -> String {
+        s.count > max ? String(s.prefix(keep)) + "…" : s
+    }
+
+    // Higher = more important. A session awaiting YOUR permission must never be hidden behind
+    // another session that's merely thinking, regardless of which wrote last.
+    func priority(of state: String) -> Int {
+        switch state {
+        case "permission":        return 4
+        case "thinking", "tool":  return 3
+        case "waiting":           return 2
+        case "done":              return 1
+        default:                  return 0 // idle / unknown
+        }
+    }
+
+    // Read every per-session state file and pick the most important one (ties broken by recency).
+    // Each Claude Code session writes its own file under sessions.d/; see update.js.
+    func aggregateState() -> [String: Any] {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(atPath: sessionsDir) else { return [:] }
+        let now = Date().timeIntervalSince1970
+        var best: [String: Any]?
+        var bestRank = -1
+        var bestTs = 0.0
+        for f in files where !f.hasSuffix(".tmp") {
+            let path = (sessionsDir as NSString).appendingPathComponent(f)
+            guard let data = fm.contents(atPath: path), !data.isEmpty,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+            var st = obj["state"] as? String ?? "idle"
+            let ts = (obj["ts"] as? NSNumber)?.doubleValue ?? 0
+            // A session that crashed mid-turn leaves a frozen file; don't let it outrank live work.
+            if ["thinking", "tool", "permission"].contains(st), now - ts > staleSessionAfter { st = "idle" }
+            let rank = priority(of: st)
+            if rank > bestRank || (rank == bestRank && ts > bestTs) {
+                best = obj; bestRank = rank; bestTs = ts
+            }
+        }
+        return best ?? [:]
+    }
+
     func tick() {
         checkLifecycle()
-        let fm = FileManager.default
-        guard let attrs = try? fm.attributesOfItem(atPath: statePath),
-              let m = attrs[.modificationDate] as? Date else {
-            evaluate(); return
-        }
-        if m != lastMTime {
-            lastMTime = m
+        let agg = aggregateState()
+        if agg.isEmpty {
+            // Fallback for sessions that predate per-session files: the legacy shared state.json.
+            let fm = FileManager.default
             if let data = fm.contents(atPath: statePath),
                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 current = obj
+            } else {
+                current = [:]
             }
+        } else {
+            current = agg
         }
         evaluate()
     }
@@ -328,7 +375,12 @@ final class StatusController: NSObject, NSMenuDelegate {
         switch eff {
         case "thinking":  render(label: label.isEmpty ? "Thinking…" : label, color: iconColor, animate: true,  startedAt: started)
         case "tool":      render(label: label.isEmpty ? "Working…"  : label, color: iconColor, animate: true,  startedAt: started)
-        case "permission":render(label: "Awaiting permission", color: amber, animate: false, startedAt: 0, dot: true)
+        case "permission":
+            // Name the repo so you know WHICH session is blocked when several run at once.
+            // Truncate long names in the bar (full name stays in the hover tooltip).
+            let proj = current["project"] as? String ?? ""
+            let permLabel = proj.isEmpty ? "Awaiting permission" : "\(truncated(proj)) · Awaiting permission"
+            render(label: permLabel, color: amber, animate: false, startedAt: 0, dot: true)
         case "waiting":   render(label: label.isEmpty ? "Waiting" : label, color: iconColor, animate: false, startedAt: 0)
         default:          render(label: "", color: iconColor, animate: false, startedAt: 0) // done + idle: just the orange spark
         }
@@ -379,6 +431,14 @@ final class StatusController: NSObject, NSMenuDelegate {
         activeBase = label
         activeColor = color
         self.startedAt = startedAt
+
+        // Hover tooltip: always name the repo (and state), so you can tell sessions apart even in
+        // the active styles, where the bar shows only the animated icon to save width.
+        let proj = current["project"] as? String ?? ""
+        var desc = label
+        if !proj.isEmpty, let r = desc.range(of: "\(proj) · ") { desc.removeSubrange(r) } // de-dup the permission prefix
+        if desc.isEmpty { desc = "Idle" }
+        button.toolTip = proj.isEmpty ? desc : "\(proj) — \(desc)"
 
         if animate {
             if animTimer == nil {

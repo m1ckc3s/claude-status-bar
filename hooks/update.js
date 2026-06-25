@@ -36,16 +36,21 @@ process.stdin.on("end", () => {
   // Register the session here too, so a session that predates the hook install (never
   // fired SessionStart) still gets tracked once it does anything. See CLAUDE.md gotcha.
   const sid = String(p.session_id || "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64);
+  const sessDir = path.join(dir, "sessions.d");
+  const sessFile = sid ? path.join(sessDir, sid) : "";
   if (sid) {
     try {
-      const sessDir = path.join(dir, "sessions.d");
+      // Register the session (don't truncate an existing state file — only create if absent).
       fs.mkdirSync(sessDir, { recursive: true });
-      fs.writeFileSync(path.join(sessDir, sid), "");
+      if (!fs.existsSync(sessFile)) fs.writeFileSync(sessFile, "");
     } catch {}
   }
 
+  // Carry forward THIS session's own previous state (its startedAt clock), falling back to the
+  // legacy shared state.json for sessions that predate per-session files.
   let prev = {};
-  try { prev = JSON.parse(fs.readFileSync(statePath, "utf8")); } catch {}
+  try { prev = JSON.parse(fs.readFileSync(sessFile || statePath, "utf8")); } catch {}
+  if (!prev.state) { try { prev = JSON.parse(fs.readFileSync(statePath, "utf8")); } catch {} }
 
   const project = p.cwd ? path.basename(p.cwd) : prev.project || "";
   const ts = Math.floor(Date.now() / 1000);
@@ -87,10 +92,15 @@ process.stdin.on("end", () => {
   }
 
   const out = { state, label, tool: p.tool_name || "", project, sessionId: p.session_id || "", transcript: p.transcript_path || prev.transcript || "", startedAt, ts };
+  const writeAtomic = (dest) => {
+    const tmp = dest + "." + process.pid + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(out));
+    fs.renameSync(tmp, dest);
+  };
   try {
     fs.mkdirSync(dir, { recursive: true });
-    const tmp = statePath + "." + process.pid + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(out));
-    fs.renameSync(tmp, statePath);
+    writeAtomic(statePath); // legacy single-state file (kept for back-compat)
+    // Per-session state: the app aggregates these by priority across sessions.
+    if (sessFile) writeAtomic(sessFile);
   } catch {}
 });
