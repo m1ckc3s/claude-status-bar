@@ -12,7 +12,17 @@ mkdir -p "$APP/Contents/MacOS"
 echo "Compiling…"
 # Pin the deployment target, else swiftc stamps the binary with the build machine's OS
 # (e.g. macOS 26), making it refuse to launch on older systems despite LSMinimumSystemVersion.
-swiftc -O -target arm64-apple-macos12.0 Sources/*.swift -o "$BIN" -framework Cocoa
+# Build a universal binary (x86_64 + arm64) so it runs on both Intel and Apple Silicon Macs.
+ARCHES=("x86_64" "arm64")
+SLICES=()
+for arch in "${ARCHES[@]}"; do
+  slice="build/ClaudeStatusBar-$arch"
+  echo "  Building $arch slice…"
+  swiftc -O -target "$arch-apple-macos12.0" Sources/*.swift -o "$slice" -framework Cocoa
+  SLICES+=("$slice")
+done
+echo "  Creating universal binary with lipo…"
+lipo -create "${SLICES[@]}" -output "$BIN"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
