@@ -51,9 +51,9 @@ Everything is controlled from the menu:
 
 ## Requirements
 
-- macOS 12+
+- macOS 12+ (Apple Silicon **or** Intel — the app ships as a universal binary)
 - [Claude Code](https://claude.com/claude-code) (CLI or the Desktop app)
-- Node.js
+- Node.js — **only** for the Claude Code plugin install (Option B). The DMG app (Option A) is self-contained and needs no Node.
 
 ## Install
 
@@ -84,14 +84,16 @@ The plugin installs the hooks but not the app itself, so drag **Claude Status Ba
 
 ## How it works
 
-The app is stateless. Claude Code hooks write the current status to `~/.claude/statusbar/state.json`; the app polls that file every 0.4s and renders the icon and label. `SessionStart` launches it; it self-quits once the Claude desktop app is closed and no Claude Code session is active (each active session is a file under `~/.claude/statusbar/sessions.d/`).
+The app is stateless. Claude Code hooks write the current status, one file per session, to `~/.claude/statusbar/sessions.d/<session_id>.json`; the app polls that directory every 0.4s, aggregates across sessions (a permission prompt outranks active work, which outranks idle), and renders the icon and label. `SessionStart` launches it; it self-quits once the Claude desktop app is closed and no Claude Code session is active.
 
-The installer merges its hooks into `~/.claude/settings.json` (backing it up first), and the app's only network call is a once-a-day GitHub release check ([details](docs/privacy.md)).
+For the DMG app the hooks are wired by the app itself — there is **no Node dependency**: the single signed binary handles the hook events (`--hook`) and the `~/.claude/settings.json` wiring (`--install` / `--uninstall`) in-process. A Swift binary launches in ~10 ms, versus ~80 ms to spawn a Node process on every tool call, and there is no absolute `node` path to rot in `settings.json` when you change Node versions. (The Claude Code *plugin* install path still uses small Node scripts, because a plugin self-locates via `${CLAUDE_PLUGIN_ROOT}`.)
+
+The installer merges its hooks into `~/.claude/settings.json` (backing it up first, never clobbering third-party hooks, and refusing to touch a malformed file), and the app's only network call is a once-a-day GitHub release check ([details](docs/privacy.md)).
 
 ## Uninstall
 
 ```bash
-node "/Applications/ClaudeStatusBar.app/Contents/Resources/uninstall.js"   # removes only our hooks
+"/Applications/ClaudeStatusBar.app/Contents/MacOS/ClaudeStatusBar" --uninstall   # removes only our hooks
 ```
 Then drag the app to the Trash.
 

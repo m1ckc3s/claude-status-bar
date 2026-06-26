@@ -9,10 +9,15 @@ BIN="$APP/Contents/MacOS/ClaudeStatusBar"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 
-echo "Compiling…"
+echo "Compiling (universal: arm64 + x86_64)…"
 # Pin the deployment target, else swiftc stamps the binary with the build machine's OS
 # (e.g. macOS 26), making it refuse to launch on older systems despite LSMinimumSystemVersion.
-swiftc -O -target arm64-apple-macos12.0 Sources/*.swift -o "$BIN" -framework Cocoa
+# Build each arch, then lipo into one universal binary so Intel Macs are supported too.
+swiftc -O -target arm64-apple-macos12.0  Sources/*.swift -o "$BIN.arm64"  -framework Cocoa
+swiftc -O -target x86_64-apple-macos12.0 Sources/*.swift -o "$BIN.x86_64" -framework Cocoa
+lipo -create "$BIN.arm64" "$BIN.x86_64" -output "$BIN"
+rm -f "$BIN.arm64" "$BIN.x86_64"
+echo "Architectures: $(lipo -archs "$BIN")"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -23,8 +28,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleDisplayName</key><string>Claude Status Bar</string>
   <key>CFBundleIdentifier</key><string>com.local.claudestatusbar</string>
   <key>CFBundleExecutable</key><string>ClaudeStatusBar</string>
-  <key>CFBundleVersion</key><string>0.2.2</string>
-  <key>CFBundleShortVersionString</key><string>0.2.2</string>
+  <key>CFBundleVersion</key><string>0.3.0</string>
+  <key>CFBundleShortVersionString</key><string>0.3.0</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSUIElement</key><true/>
@@ -33,9 +38,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# Bundle the hook scripts (so first-launch self-install works) and the app icon.
+# Bundle the app icon + completion chime. Hook scripts are gone: hook handling and the
+# settings.json wiring now live inside the binary itself (--hook / --install / --uninstall),
+# so there is no node dependency and nothing to copy here.
 mkdir -p "$APP/Contents/Resources"
-cp hooks/update.js hooks/lifecycle.js hooks/install.js hooks/uninstall.js "$APP/Contents/Resources/"
 cp assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp assets/completion.mp3 "$APP/Contents/Resources/completion.mp3"
 
@@ -50,8 +56,11 @@ cp assets/completion.mp3 "$APP/Contents/Resources/completion.mp3"
 TEAM_ID="W9JZ4932LA"
 NOTARY_PROFILE="${NOTARY_PROFILE:-claude-statusbar}"
 
+# `|| true`: with `set -euo pipefail`, a machine WITHOUT the Developer ID cert makes the
+# grep fail, which would otherwise abort the whole build here (it did, silently, for anyone
+# who wasn't the original author). Tolerate the empty result and fall back to ad-hoc signing.
 SIGN_ID="$(security find-identity -v -p codesigning 2>/dev/null \
-  | grep "Developer ID Application" | grep "$TEAM_ID" | head -1 | sed -E 's/.*"(.*)"/\1/')"
+  | grep "Developer ID Application" | grep "$TEAM_ID" | head -1 | sed -E 's/.*"(.*)"/\1/' || true)"
 
 # Strip extended attributes (Finder info, quarantine, etc.) that bundled resources can
 # carry — codesign rejects them ("resource fork, Finder information, ... not allowed").

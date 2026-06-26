@@ -2,11 +2,9 @@ import Cocoa
 
 final class StatusController: NSObject, NSMenuDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    let statePath = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/statusbar/state.json")
     let sessionsDir = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/statusbar/sessions.d")
     let claudeDesktopBundleID = "com.anthropic.claudefordesktop"
 
-    var lastMTime: Date = .distantPast
     var pollTimer: Timer?
     var animTimer: Timer?
     var frameIdx = 0
@@ -83,59 +81,16 @@ final class StatusController: NSObject, NSMenuDelegate {
     }
 
     // Re-runs on first install AND on every version change, so upgrades pick up hook
-    // changes and retire old artifacts. See CLAUDE.md "ensureHooksInstalled" for why.
+    // changes and retire old artifacts. Node-free now: we wire settings.json from Swift,
+    // in-process — no `node` to locate, no absolute interpreter path to rot in settings.json.
     func ensureHooksInstalled() {
         let d = UserDefaults.standard
-        let current = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? ""
-        guard d.string(forKey: "installedVersion") != current,
-              let installer = Bundle.main.path(forResource: "install", ofType: "js") else { return }
+        let version = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? ""
+        guard d.string(forKey: "installedVersion") != version else { return }
         DispatchQueue.global().async {
-            guard let node = Self.locateNode() else {
-                NSLog("ClaudeStatusBar: could not find node; hooks not installed (will retry next launch)")
-                return
-            }
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: node)
-            task.arguments = [installer]
-            try? task.run()
-            task.waitUntilExit()
-            if task.terminationStatus == 0 { UserDefaults.standard.set(current, forKey: "installedVersion") }
+            HookInstaller.install()
+            UserDefaults.standard.set(version, forKey: "installedVersion")
         }
-    }
-
-    // `/bin/zsh -lc node` saw only the login PATH, missing nvm/fnm set in .zshrc.
-    static func locateNode() -> String? {
-        let fm = FileManager.default
-        let home = NSHomeDirectory()
-        var candidates = [
-            "/opt/homebrew/bin/node",
-            "/usr/local/bin/node",
-            "/usr/bin/node",
-            "\(home)/.volta/bin/node",
-            "\(home)/.asdf/shims/node",
-        ]
-        let nvmDir = "\(home)/.nvm/versions/node"
-        if let versions = try? fm.contentsOfDirectory(atPath: nvmDir) {
-            for v in versions.sorted(by: >) { candidates.append("\(nvmDir)/\(v)/bin/node") }
-        }
-        for path in candidates where fm.isExecutableFile(atPath: path) { return path }
-
-        for args in [["-ilc", "command -v node"], ["-lc", "command -v node"]] {
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            p.arguments = args
-            let pipe = Pipe()
-            p.standardOutput = pipe
-            p.standardError = FileHandle.nullDevice
-            guard (try? p.run()) != nil else { continue }
-            p.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let path = (String(data: data, encoding: .utf8) ?? "")
-                .split(separator: "\n").last.map(String.init)?
-                .trimmingCharacters(in: .whitespaces) ?? ""
-            if !path.isEmpty, fm.isExecutableFile(atPath: path) { return path }
-        }
-        return nil
     }
 
     // MARK: update check
@@ -280,19 +235,68 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     func tick() {
         checkLifecycle()
-        let fm = FileManager.default
-        guard let attrs = try? fm.attributesOfItem(atPath: statePath),
-              let m = attrs[.modificationDate] as? Date else {
-            evaluate(); return
+        // Aggregate every live session's state into the single one we display. Each session
+        // owns its own file (sessions.d/<id>.json), so concurrent sessions never stomp each
+        // other the way the old single global state.json did.
+        current = aggregateState()
+        evaluate()
+    }
+
+    // Load + normalize every session's state file.
+    func loadSessionStates() -> [[String: Any]] {
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: sessionsDir) else { return [] }
+        return files.compactMap { f -> [String: Any]? in
+            guard f.hasSuffix(".json") else { return nil }
+            let p = (sessionsDir as NSString).appendingPathComponent(f)
+            guard let d = FileManager.default.contents(atPath: p),
+                  let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
+            return normalize(obj)
         }
-        if m != lastMTime {
-            lastMTime = m
-            if let data = fm.contents(atPath: statePath),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                current = obj
+    }
+
+    // Apply the interrupt/stale recovery per session (was inline in evaluate()).
+    // Stop fires on normal completion but NOT on an Esc interrupt or a denied permission
+    // prompt: Claude Code writes "[Request interrupted by user]" to the transcript and ends
+    // with no hook, freezing the file. Recover off that marker; 900s is the absolute net.
+    func normalize(_ input: [String: Any]) -> [String: Any] {
+        var s = input
+        let state = s["state"] as? String ?? "idle"
+        let ts = (s["ts"] as? NSNumber)?.doubleValue ?? 0
+        let age = Date().timeIntervalSince1970 - ts
+        if state == "thinking" || state == "tool" || state == "permission" {
+            if age > 900 { s["state"] = "idle"; s["label"] = "" }
+            else if let tr = s["transcript"] as? String,
+                    let last = lastLine(ofFileAt: tr), last.contains("interrupted by user") {
+                s["state"] = "idle"; s["label"] = ""
             }
         }
-        evaluate()
+        return s
+    }
+
+    // Pick the session that should drive the menu bar: permission (needs YOU) outranks
+    // active work, which outranks waiting/done/idle; ties break to the most recent.
+    func aggregateState() -> [String: Any] {
+        let states = loadSessionStates()
+        if states.isEmpty { return [:] }
+        func rank(_ s: [String: Any]) -> Int {
+            switch s["state"] as? String ?? "idle" {
+            case "permission": return 4
+            case "tool", "thinking": return 3
+            case "waiting": return 2
+            case "done": return 1
+            default: return 0
+            }
+        }
+        func ts(_ s: [String: Any]) -> Double { (s["ts"] as? NSNumber)?.doubleValue ?? 0 }
+        let best = states.max { a, b in rank(a) != rank(b) ? rank(a) < rank(b) : ts(a) < ts(b) } ?? [:]
+
+        // When >1 session is doing active work, suffix the count so the menu bar reflects it.
+        let activeCount = states.filter { ["tool", "thinking", "permission"].contains($0["state"] as? String ?? "") }.count
+        if activeCount > 1, var b = best as [String: Any]?, let lbl = b["label"] as? String, !lbl.isEmpty {
+            b["label"] = "\(lbl) · \(activeCount) sessions"
+            return b
+        }
+        return best
     }
 
     func evaluate() {
@@ -546,6 +550,24 @@ final class StatusController: NSObject, NSMenuDelegate {
         img.isTemplate = (color == nil) // nil => adaptive black/white in the menu bar
         return img
     }
+}
+
+// Subcommand dispatch — runs BEFORE any Cocoa init, so hook/install modes stay tiny and
+// fast (no status item, no run loop). This is what makes the binary a drop-in replacement
+// for the old node hook scripts.
+let cliArgs = Array(CommandLine.arguments.dropFirst())
+switch cliArgs.first {
+case "--hook":
+    HookRunner.run(event: cliArgs.dropFirst().first ?? "")
+    exit(0)
+case "--install":
+    HookInstaller.install()
+    exit(0)
+case "--uninstall":
+    HookInstaller.uninstall()
+    exit(0)
+default:
+    break
 }
 
 let app = NSApplication.shared

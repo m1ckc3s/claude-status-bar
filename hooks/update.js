@@ -1,6 +1,9 @@
 #!/usr/bin/env node
-// Invoked by Claude Code hooks. Reads the hook JSON payload on stdin, maps the
-// event to a status, and atomically writes ~/.claude/statusbar/state.json.
+// Invoked by Claude Code hooks (plugin install path). Reads the hook JSON payload on
+// stdin, maps the event to a status, and atomically writes ONE state file PER SESSION at
+// ~/.claude/statusbar/sessions.d/<session_id>.json. The app aggregates across sessions,
+// so concurrent sessions no longer stomp a single global state.json.
+// (The standalone .app install path does this same thing natively, with no node.)
 // Usage: node update.js <prompt|pre|post|notify|permreq|stop>
 
 const fs = require("fs");
@@ -8,7 +11,7 @@ const os = require("os");
 const path = require("path");
 
 const dir = path.join(os.homedir(), ".claude", "statusbar");
-const statePath = path.join(dir, "state.json");
+const sessDir = path.join(dir, "sessions.d");
 const event = process.argv[2] || "";
 
 const TOOL_LABELS = {
@@ -33,16 +36,11 @@ process.stdin.on("end", () => {
     } catch {}
   }
 
-  // Register the session here too, so a session that predates the hook install (never
-  // fired SessionStart) still gets tracked once it does anything. See CLAUDE.md gotcha.
-  const sid = String(p.session_id || "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64);
-  if (sid) {
-    try {
-      const sessDir = path.join(dir, "sessions.d");
-      fs.mkdirSync(sessDir, { recursive: true });
-      fs.writeFileSync(path.join(sessDir, sid), "");
-    } catch {}
-  }
+  // Each session owns its own state file. A session that predates the hook install
+  // (never fired SessionStart) still gets tracked the moment it does anything here.
+  const sid = String(p.session_id || "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64) || "default";
+  const statePath = path.join(sessDir, sid + ".json");
+  try { fs.mkdirSync(sessDir, { recursive: true }); } catch {}
 
   let prev = {};
   try { prev = JSON.parse(fs.readFileSync(statePath, "utf8")); } catch {}
@@ -88,7 +86,6 @@ process.stdin.on("end", () => {
 
   const out = { state, label, tool: p.tool_name || "", project, sessionId: p.session_id || "", transcript: p.transcript_path || prev.transcript || "", startedAt, ts };
   try {
-    fs.mkdirSync(dir, { recursive: true });
     const tmp = statePath + "." + process.pid + ".tmp";
     fs.writeFileSync(tmp, JSON.stringify(out));
     fs.renameSync(tmp, statePath);

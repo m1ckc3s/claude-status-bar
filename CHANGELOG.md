@@ -3,6 +3,19 @@
 All notable changes to Claude Status Bar are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-06-26
+
+### Changed
+- **The DMG app no longer needs Node.** Hook handling and the `settings.json` wiring now run inside the single signed binary (`--hook` / `--install` / `--uninstall`) instead of shelling out to `node` scripts. A Swift binary launches in ~10 ms versus ~80 ms to spawn Node on every tool call, and there is no absolute `node` path baked into `settings.json` to break when you switch Node versions (nvm/fnm). The Claude Code *plugin* install path still uses Node, since a plugin self-locates via `${CLAUDE_PLUGIN_ROOT}`.
+- **Per-session state.** Each session now writes its own `sessions.d/<session_id>.json` and the app aggregates across them (a permission prompt outranks active work, which outranks idle), so running several Claude sessions at once no longer makes them stomp a single global `state.json`. When more than one session is active the label shows the count.
+
+### Added
+- **Universal binary** (arm64 + x86_64): Intel Macs are supported again.
+
+### Fixed
+- The installer no longer clobbers a malformed `settings.json` — if the file isn't valid JSON it's left untouched. Writes are atomic, and third-party hooks are always preserved.
+- `build.sh` no longer aborts under `set -euo pipefail` on a machine without the Developer ID certificate; it falls back to an ad-hoc signed local build as intended.
+
 ## [0.2.2] - 2026-06-25
 
 ### Fixed
