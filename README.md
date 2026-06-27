@@ -110,6 +110,10 @@ This is an unofficial, open-source side project. **It is not affiliated with, en
 If I'm violating or impeding your trademark, Contact me on X Chat ([@mickces](https://x.com/mickces))
 This is a free side project; I'm not monetizing it.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for what fits, what doesn't, and how to build.
+
 ## License
 
 MIT
