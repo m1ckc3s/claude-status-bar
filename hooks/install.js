@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Installs the status-bar hooks into ~/.claude/settings.json (merging, never
-// clobbering existing hooks) and copies update.js to ~/.claude/statusbar/.
+// clobbering existing hooks) and copies hook scripts to ~/.claude/statusbar/.
 // Re-runnable: existing status-bar hooks are stripped before re-adding.
 
 const fs = require("fs");
@@ -13,6 +13,8 @@ const sbDir = path.join(home, ".claude", "statusbar");
 const MARKER = sbDir; // every hook command we add points inside this dir
 const updateDest = path.join(sbDir, "update.js");
 const lifecycleDest = path.join(sbDir, "lifecycle.js");
+const titleDest = path.join(sbDir, "title.js");
+const retitleDest = path.join(sbDir, "retitle.js");
 const settingsPath = path.join(home, ".claude", "settings.json");
 const node = process.execPath;
 
@@ -29,6 +31,9 @@ fs.rmSync(path.join(sbDir, "state.json"), { force: true });
 fs.rmSync(path.join(sbDir, "sessions.d"), { recursive: true, force: true });
 fs.copyFileSync(path.join(__dirname, "update.js"), updateDest);
 fs.copyFileSync(path.join(__dirname, "lifecycle.js"), lifecycleDest);
+// Copy title generation scripts if present (future-proof: harmless if missing).
+try { fs.copyFileSync(path.join(__dirname, "title.js"), titleDest); } catch {}
+try { fs.copyFileSync(path.join(__dirname, "retitle.js"), retitleDest); } catch {}
 
 const cmd = (evt) => `${node} ${updateDest} ${evt}`;
 const life = (evt) => `${node} ${lifecycleDest} ${evt}`;
@@ -71,5 +76,5 @@ addUnmatched("SessionEnd", life("end"));
 
 fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 console.log("Installed status-bar hooks into", settingsPath);
-console.log("Scripts:", updateDest, "and", lifecycleDest);
+console.log("Scripts:", updateDest, lifecycleDest, titleDest, retitleDest);
 console.log("Backup (first run only):", settingsPath + ".bak-statusbar");

@@ -183,7 +183,7 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     // One parsed entry per live session file (state.d/<id>.json), refreshed each tick.
     struct Session {
-        var id: String, state: String, label: String, project: String, transcript: String
+        var id: String, state: String, label: String, project: String, dirName: String, transcript: String
         var entrypoint: String  // CLAUDE_CODE_ENTRYPOINT: "cli", "claude-desktop", …
         var termProgram: String // TERM_PROGRAM for CLI sessions: "Apple_Terminal", "iTerm.app", …
         var startedAt: Double, ts: Double
@@ -194,6 +194,7 @@ final class StatusController: NSObject, NSMenuDelegate {
             self.state = o["state"] as? String ?? "idle"
             self.label = o["label"] as? String ?? ""
             self.project = o["project"] as? String ?? ""
+            self.dirName = o["dirName"] as? String ?? ""
             self.transcript = o["transcript"] as? String ?? ""
             self.entrypoint = o["entrypoint"] as? String ?? ""
             self.termProgram = o["term_program"] as? String ?? ""
@@ -221,6 +222,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     var showTimer = false
     var iconSystem = false // false = brand Orange; true = adaptive black/white (template image)
     var playCompletionSound = false // chime when a turn longer than ~1 min finishes
+    var titleMode = "llm"           // "llm" = smart titles; "folder" = raw directory names
     lazy var completionSound: NSSound? = {
         guard let p = Bundle.main.path(forResource: "completion", ofType: "mp3"),
               let s = NSSound(contentsOfFile: p, byReference: true) else { return nil }
@@ -261,6 +263,11 @@ final class StatusController: NSObject, NSMenuDelegate {
         if d.object(forKey: "iconSystem") != nil { iconSystem = d.bool(forKey: "iconSystem") }
         if d.object(forKey: "completionSound") != nil { playCompletionSound = d.bool(forKey: "completionSound") }
         if let s = d.string(forKey: "animStyle"), let st = AnimStyle(rawValue: s) { animStyle = st }
+        // Load titleMode from shared prefs.json (also read/written by the Node hook scripts).
+        let prefsPath = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/statusbar/prefs.json")
+        if let prefsData = try? Data(contentsOf: URL(fileURLWithPath: prefsPath)),
+           let prefsObj = try? JSONSerialization.jsonObject(with: prefsData) as? [String: Any],
+           let mode = prefsObj["titleMode"] as? String { titleMode = mode }
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
@@ -483,6 +490,18 @@ final class StatusController: NSObject, NSMenuDelegate {
         hideParent.submenu = hideSub
         menu.addItem(hideParent)
 
+        let titleModeParent = NSMenuItem(title: "Session title", action: nil, keyEquivalent: "")
+        let titleModeSub = NSMenu()
+        for (mode, name) in [("llm", "Smart"), ("folder", "Folder")] {
+            let it = NSMenuItem(title: name, action: #selector(chooseTitleMode(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = mode
+            it.state = titleMode == mode ? .on : .off
+            titleModeSub.addItem(it)
+        }
+        titleModeParent.submenu = titleModeSub
+        menu.addItem(titleModeParent)
+
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Version \(currentVersion)", action: nil, keyEquivalent: ""))
         if let latest = UserDefaults.standard.string(forKey: "latestVersion"), versionIsNewer(latest, than: currentVersion) {
@@ -580,9 +599,12 @@ final class StatusController: NSObject, NSMenuDelegate {
         }
     }
 
-    // Just the repo/cwd; the surface (CLI/APP) renders as a trailing badge instead of inline.
+    // Respects titleMode: "llm" → LLM title, "folder" → directory name.
     func sessionName(_ s: Session) -> String {
-        s.project.isEmpty ? "session" : s.project
+        switch titleMode {
+        case "folder":  return s.dirName.isEmpty ? s.project : s.dirName
+        default:        return s.project.isEmpty ? "session" : s.project
+        }
     }
 
     // CLAUDE_CODE_ENTRYPOINT -> a short all-caps badge tag.
@@ -770,6 +792,29 @@ final class StatusController: NSObject, NSMenuDelegate {
         animTimer?.invalidate(); animTimer = nil // recreate at the new style's fps
         frameIdx = 0
         evaluate()
+    }
+
+    @objc func chooseTitleMode(_ sender: NSMenuItem) {
+        guard let mode = sender.representedObject as? String else { return }
+        titleMode = mode
+        writePrefs()
+        // Update already-visible session rows so the change takes effect immediately
+        // without requiring a menu close/reopen.
+        for (item, id) in sessionMenuItems {
+            guard let s = sessions[id], let v = item.view as? SessionRowView else { continue }
+            configureSessionRow(v, s, eff: s.eff)
+        }
+    }
+
+    // Persist titleMode to the shared prefs.json file that the Node hook scripts also read.
+    func writePrefs() {
+        let prefsPath = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/statusbar/prefs.json")
+        let obj: [String: Any] = ["titleMode": titleMode]
+        if let data = try? JSONSerialization.data(withJSONObject: obj, options: .prettyPrinted) {
+            let dir = (prefsPath as NSString).deletingLastPathComponent
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try? data.write(to: URL(fileURLWithPath: prefsPath), options: .atomic)
+        }
     }
 
     // MARK: state polling
