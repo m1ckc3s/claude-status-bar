@@ -173,6 +173,12 @@ final class StatusController: NSObject, NSMenuDelegate {
     var spinAngle: CGFloat = 0
     var frameIdx = 0
 
+    // Usage widget, merged into this single status item.
+    let store: UsageStore
+    var usageTimer: Timer?                  // periodic usage refresh
+    var menuTimer: Timer?                   // live reset-countdown while the menu is open
+    var barViews: [ProgressBarView] = []    // open rows, marked dirty live by menuTimer
+
     let launchedAt = Date()
     var notNeededSince: Date?
     let launchGrace: TimeInterval = 5   // settle time after launch before we may quit
@@ -213,6 +219,9 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     let brand = NSColor(srgbRed: 0.851, green: 0.467, blue: 0.341, alpha: 1) // #d97757, Anthropic's official "Orange" accent
     let amber = NSColor(srgbRed: 0.95, green: 0.73, blue: 0.18, alpha: 1) // "awaiting permission" yellow dot
+    // Shared so the title text, the percent element, and the inline bar/dot offset (computed from
+    // this font's capHeight) stay in lockstep — a size/weight tweak can't drift them apart.
+    static let menuBarFont = NSFont.monospacedDigitSystemFont(ofSize: 0, weight: .regular)
     let frames: [NSImage] = StatusController.loadFrames()
     let spriteFPS: Double = 9 // tune: 8 frames per loop -> ~0.9s/cycle
 
@@ -254,7 +263,8 @@ final class StatusController: NSObject, NSMenuDelegate {
         }
     }
 
-    override init() {
+    init(store: UsageStore) {
+        self.store = store
         super.init()
         let d = UserDefaults.standard
         if d.object(forKey: "showTimer") != nil { showTimer = d.bool(forKey: "showTimer") }
@@ -269,6 +279,13 @@ final class StatusController: NSObject, NSMenuDelegate {
         RunLoop.main.add(t, forMode: .common)
         pollTimer = t
         tick()
+
+        // Usage: arm the periodic refresh and kick a first fetch so the indicator paints ASAP.
+        startUsageTimer()
+        store.refresh(force: false) { [weak self] _ in
+            self?.evaluate() // re-render the glyph/title with the fresh utilization
+        }
+
         ensureHooksInstalled()
         checkForUpdate()
     }
@@ -379,11 +396,19 @@ final class StatusController: NSObject, NSMenuDelegate {
         let t = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in self?.spinTick() }
         RunLoop.main.add(t, forMode: .common)  // .common so it fires during menu tracking
         spinTimer = t
+        // Live reset-countdown on the usage rows: a slower .common-mode timer marks them dirty.
+        menuTimer?.invalidate()
+        let mt = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
+            self?.barViews.forEach { $0.tick() }
+        }
+        RunLoop.main.add(mt, forMode: .common)
+        menuTimer = mt
     }
     func menuDidClose(_ menu: NSMenu) {
         menuIsOpen = false
         sessionMenuItems.removeAll()
         spinTimer?.invalidate(); spinTimer = nil
+        menuTimer?.invalidate(); menuTimer = nil
     }
 
     // Advance the spinner and repaint only the working-state rows' leading icons.
@@ -412,26 +437,102 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        barViews.removeAll()
         checkForUpdate() // refreshes the update cache for next open (gated to once a day)
 
-        sessionMenuItems.removeAll()
-        if !sessions.isEmpty {
-            menu.addItem(header("Sessions"))
-            for s in sessions.values.sorted(by: { $0.ts > $1.ts }) {
-                let now = Date().timeIntervalSince1970
-                let eff = s.eff.isEmpty ? effectiveState(s, now: now) : s.eff
-                let view = SessionRowView(id: s.id, width: CGFloat(uiConfig()["boxWidth"] ?? 300))
-                let sid = s.id, ep = s.entrypoint, tp = s.termProgram
-                view.onClick = { [weak self] in menu.cancelTracking(); self?.openSession(sid, entrypoint: ep, termProgram: tp) }
-                configureSessionRow(view, s, eff: eff)
-                let it = NSMenuItem()
-                it.view = view
-                menu.addItem(it)
-                sessionMenuItems.append((it, s.id))  // kept so tick() can live-update the timers
-            }
-            menu.addItem(.separator())
+        // Stats (unlabeled): the usage bars, or the known sign-in / expired states.
+        let snap = store.snapshot
+        switch snap?.source {
+        case .signedOut?:
+            menu.addItem(infoRow("Sign in to Claude Code"))
+            addLocalRows(menu, snap) // honest local totals alongside the sign-in prompt
+        case .expired?:
+            menu.addItem(infoRow("Re-login to Claude Code"))
+        default:
+            addBarRow(menu, title: "Session (5h)", window: snap?.session)
+            addBarRow(menu, title: "Weekly (7d)", window: snap?.week)
         }
 
+        // Sessions (unlabeled): no divider above — a blank spacer widens the gap from the bars.
+        sessionMenuItems.removeAll()
+        if !sessions.isEmpty { menu.addItem(spacerRow(12)) }
+        for s in sessions.values.sorted(by: { $0.ts > $1.ts }) {
+            let now = Date().timeIntervalSince1970
+            let eff = s.eff.isEmpty ? effectiveState(s, now: now) : s.eff
+            let view = SessionRowView(id: s.id, width: CGFloat(uiConfig()["boxWidth"] ?? 300))
+            let sid = s.id, ep = s.entrypoint, tp = s.termProgram
+            view.onClick = { [weak self] in menu.cancelTracking(); self?.openSession(sid, entrypoint: ep, termProgram: tp) }
+            configureSessionRow(view, s, eff: eff)
+            let it = NSMenuItem()
+            it.view = view
+            menu.addItem(it)
+            sessionMenuItems.append((it, s.id))  // kept so tick() can live-update the timers
+        }
+
+        menu.addItem(spacerRow(12)) // same breathing room before the divider as above the sessions
+        menu.addItem(.separator())
+
+        menu.addItem(NSMenuItem(title: "Version \(currentVersion)", action: nil, keyEquivalent: ""))
+        if let latest = UserDefaults.standard.string(forKey: "latestVersion"), versionIsNewer(latest, than: currentVersion) {
+            let up = NSMenuItem(title: "Update available", action: #selector(openLatestRelease), keyEquivalent: "")
+            up.target = self
+            menu.addItem(up)
+        }
+
+        // Everything configurable lives one level down to keep the top level slim.
+        let settingsItem = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
+        settingsItem.submenu = buildSettingsMenu(snap: snap)
+        menu.addItem(settingsItem)
+
+        let q = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
+        q.target = self
+        menu.addItem(q)
+    }
+
+    // The grouped + labeled settings, in a "Settings ▸" submenu off the slim top-level menu.
+    func buildSettingsMenu(snap: UsageSnapshot?) -> NSMenu {
+        let menu = NSMenu()
+
+        // Stats: usage-meter settings + a manual refresh (badge shows the last-updated time).
+        menu.addItem(header("Stats"))
+
+        menu.addItem(MenuBuilders.choiceSubmenu(
+            title: "Usage window",
+            choices: [("Session", UsageScope.session.rawValue),
+                      ("Weekly", UsageScope.week.rawValue), ("Most urgent", UsageScope.urgent.rawValue)],
+            selected: AppSettings.shared.usageWindow.rawValue,
+            action: #selector(chooseUsageWindow(_:)), target: self))
+
+        menu.addItem(MenuBuilders.choiceSubmenu(
+            title: "Usage display",
+            choices: [("Inline bar", UsageDisplay.bar.rawValue),
+                      ("Dot", UsageDisplay.dot.rawValue), ("Percentage", UsageDisplay.percent.rawValue),
+                      ("Off", UsageDisplay.off.rawValue)],
+            selected: AppSettings.shared.usageDisplay.rawValue,
+            action: #selector(chooseUsageDisplay(_:)), target: self))
+
+        // A monochrome dot carries no severity info, so omit Monochrome while the dot display is active.
+        var colorChoices: [(label: String, key: String)] = [
+            ("Claude", ColorTheme.claude.rawValue), ("System", ColorTheme.system.rawValue)]
+        if AppSettings.shared.usageDisplay != .dot {
+            colorChoices.insert(("Monochrome", ColorTheme.mono.rawValue), at: 0)
+        }
+        menu.addItem(MenuBuilders.choiceSubmenu(
+            title: "Usage colors",
+            choices: colorChoices,
+            selected: AppSettings.shared.statusColorTheme.rawValue,
+            action: #selector(chooseColors(_:)), target: self))
+
+        menu.addItem(MenuBuilders.choiceSubmenu(
+            title: "Refresh interval",
+            choices: [("2 min", "2"), ("5 min", "5"), ("10 min", "10")],
+            selected: String(AppSettings.shared.refreshIntervalMinutes),
+            action: #selector(AppSettings.chooseRefreshInterval(_:)), target: AppSettings.shared))
+
+        menu.addItem(refreshRow(snap)) // manual fetch; the badge shows the last-updated time
+        menu.addItem(.separator())
+
+        // Options: activity-icon appearance + app behavior.
         menu.addItem(header("Options"))
 
         menu.addItem(toggleRow(title: "Show timer", isOn: showTimer) { [weak self] on in
@@ -443,10 +544,13 @@ final class StatusController: NSObject, NSMenuDelegate {
             self?.playCompletionSound = on
             UserDefaults.standard.set(on, forKey: "completionSound")
         })
+        // The setter persists + reconciles via onChange; LoginItem flips the OS login item here.
+        menu.addItem(toggleRow(title: "Launch at login", isOn: AppSettings.shared.launchAtLogin) { on in
+            AppSettings.shared.launchAtLogin = on
+            LoginItem.setEnabled(on)
+        })
 
-        menu.addItem(.separator())
-
-        let animParent = NSMenuItem(title: "Animation Style", action: nil, keyEquivalent: "")
+        let animParent = NSMenuItem(title: "Icon animation", action: nil, keyEquivalent: "")
         let animSub = NSMenu()
         for (style, name) in [(AnimStyle.web, "Claude Spark"), (AnimStyle.code, "Claude Code"), (AnimStyle.crab, "Crab Walking")] {
             let it = NSMenuItem(title: name, action: #selector(chooseStyle(_:)), keyEquivalent: "")
@@ -458,7 +562,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         animParent.submenu = animSub
         menu.addItem(animParent)
 
-        let colorParent = NSMenuItem(title: "Color theme", action: nil, keyEquivalent: "")
+        let colorParent = NSMenuItem(title: "Icon color", action: nil, keyEquivalent: "")
         let colorSub = NSMenu()
         for (sys, name) in [(false, "Orange"), (true, "System")] {
             let it = NSMenuItem(title: name, action: #selector(chooseColor(_:)), keyEquivalent: "")
@@ -483,21 +587,20 @@ final class StatusController: NSObject, NSMenuDelegate {
         hideParent.submenu = hideSub
         menu.addItem(hideParent)
 
-        menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Version \(currentVersion)", action: nil, keyEquivalent: ""))
-        if let latest = UserDefaults.standard.string(forKey: "latestVersion"), versionIsNewer(latest, than: currentVersion) {
-            let up = NSMenuItem(title: "Update available", action: #selector(openLatestRelease), keyEquivalent: "")
-            up.target = self
-            menu.addItem(up)
-        }
-        let q = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
-        q.target = self
-        menu.addItem(q)
+        return menu
     }
 
     func header(_ title: String) -> NSMenuItem {
         if #available(macOS 14.0, *) { return NSMenuItem.sectionHeader(title: title) }
         let it = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        it.isEnabled = false
+        return it
+    }
+
+    // A blank, non-selectable row of a fixed height — a visual gap between groups without a divider line.
+    func spacerRow(_ height: CGFloat) -> NSMenuItem {
+        let it = NSMenuItem()
+        it.view = NSView(frame: NSRect(x: 0, y: 0, width: 1, height: height))
         it.isEnabled = false
         return it
     }
@@ -888,6 +991,9 @@ final class StatusController: NSObject, NSMenuDelegate {
     // Stay while Claude desktop is open OR a session is active; otherwise quit after a
     // short debounced grace (warmup-session churn must not kill us).
     func checkLifecycle() {
+        // Launch-at-login keeps us resident across sessions (so the usage meter stays visible);
+        // a login-launched process must not self-quit.
+        if AppSettings.shared.launchAtLogin { return }
         let now = Date()
         if now.timeIntervalSince(launchedAt) < launchGrace { return }
         if claudeDesktopRunning() || sessionCount() > 0 {
@@ -899,17 +1005,6 @@ final class StatusController: NSObject, NSMenuDelegate {
         } else {
             notNeededSince = now
         }
-    }
-
-    // Read the last non-empty line of a (possibly large) file by tailing ~8KB.
-    func lastLine(ofFileAt path: String) -> String? {
-        guard let fh = FileHandle(forReadingAtPath: path) else { return nil }
-        defer { try? fh.close() }
-        let size = (try? fh.seekToEnd()) ?? 0
-        let chunk: UInt64 = 8192
-        try? fh.seek(toOffset: size > chunk ? size - chunk : 0)
-        guard let data = try? fh.readToEnd(), let s = String(data: data, encoding: .utf8) else { return nil }
-        return s.split(separator: "\n").last { !$0.isEmpty }.map(String.init)
     }
 
     // Last actual turn line (a user/assistant message), ignoring the bookkeeping lines Claude Code
@@ -963,19 +1058,226 @@ final class StatusController: NSObject, NSMenuDelegate {
         if showTimer, startedAt > 0 {
             text += "  " + elapsed(max(0, Int(Date().timeIntervalSince1970 - startedAt)))
         }
-        if text.isEmpty {
+
+        // Base text run: labelColor adapts (white on dark bar, black on light); monospaced
+        // digits keep the elapsed clock from nudging neighboring menu bar icons.
+        let attrs: [NSAttributedString.Key: Any] = [
+            .foregroundColor: NSColor.labelColor,
+            .font: Self.menuBarFont,
+        ]
+        let title = NSMutableAttributedString()
+        if !text.isEmpty { title.append(NSAttributedString(string: " \(text)", attributes: attrs)) }
+
+        // Inline usage element (bar/dot/percent) is always appended AFTER the activity text. It
+        // shows even when idle (empty base text) so usage is visible without an active turn.
+        if let element = usageTitleElement() { title.append(element) }
+
+        if title.length == 0 { // neither activity text nor a usage element -> icon only
             button.imagePosition = .imageOnly
             button.attributedTitle = NSAttributedString(string: "")
             return
         }
         button.imagePosition = .imageLeading
-        // labelColor adapts: white on a dark menu bar, black on a light one. Monospaced
-        // digits keep the elapsed clock from nudging neighboring menu bar icons.
-        let attrs: [NSAttributedString.Key: Any] = [
-            .foregroundColor: NSColor.labelColor,
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 0, weight: .regular),
-        ]
-        button.attributedTitle = NSAttributedString(string: " \(text)", attributes: attrs)
+        button.attributedTitle = title
+    }
+
+    // MARK: usage refresh + menu rows
+
+    // Single dispatcher for AppSettings.onChange: re-arm the usage timer for a possibly-changed
+    // interval (and its network floor), then re-render.
+    func settingsChanged() {
+        store.minRefresh = UsageStore.floor(forIntervalMinutes: AppSettings.shared.refreshIntervalMinutes)
+        startUsageTimer()
+        evaluate()
+    }
+
+    func startUsageTimer() {
+        usageTimer?.invalidate()
+        let minutes = max(1, AppSettings.shared.refreshIntervalMinutes)
+        let t = Timer(timeInterval: TimeInterval(minutes * 60), repeats: true) { [weak self] _ in self?.usageTick() }
+        RunLoop.main.add(t, forMode: .common) // survive menu tracking, like the activity poll timer
+        usageTimer = t
+    }
+
+    func usageTick() {
+        store.refresh(force: false) { [weak self] _ in // store enforces the network floor
+            self?.evaluate()
+        }
+    }
+
+    @objc func refreshNow() {
+        store.refresh(force: true) { [weak self] _ in // bypasses the network floor
+            self?.evaluate()
+        }
+    }
+
+    func addBarRow(_ menu: NSMenu, title: String, window: WindowUsage?) {
+        // A nil window means the API didn't report this scope (the parser accepts a snapshot with
+        // only one window present) — show it as unknown rather than a misleading "0%".
+        guard let window else {
+            menu.addItem(infoRow("\(title) — no data"))
+            return
+        }
+        let util = window.utilization
+        // Threshold the rounded value so the bar's severity color can't disagree with the "%"
+        // label at a boundary (e.g. 79.6 renders "80%" but is still .warn on the raw value).
+        let color = UsageColors.color(level: UsageStatus.level(util.rounded()), theme: AppSettings.shared.statusColorTheme)
+        let view = ProgressBarView(title: title, utilization: util, resetsAt: window.resetsAt,
+                                   color: color)
+        let item = NSMenuItem()
+        item.view = view
+        menu.addItem(item)
+        barViews.append(view)
+    }
+
+    func addLocalRows(_ menu: NSMenu, _ snap: UsageSnapshot?) {
+        if let today = snap?.localTokensToday { menu.addItem(infoRow("Today ≈ \(formatted(today)) tokens")) }
+        if let week = snap?.localTokensWeek { menu.addItem(infoRow("This week ≈ \(formatted(week)) tokens")) }
+    }
+
+    func infoRow(_ title: String) -> NSMenuItem {
+        let it = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        it.isEnabled = false // display rows, not actions; no selection highlight
+        return it
+    }
+
+    func formatted(_ n: Int) -> String {
+        let f = NumberFormatter(); f.numberStyle = .decimal
+        return f.string(from: NSNumber(value: n)) ?? "\(n)"
+    }
+
+    func stalenessHint(_ lastUpdated: Date) -> String {
+        let mins = Int(Date().timeIntervalSince(lastUpdated) / 60)
+        if mins < 1 { return "Updated just now" }
+        if mins < 60 { return "Updated \(mins)m ago" }
+        return "Updated \(mins / 60)h ago"
+    }
+
+    // "Refresh" with the last-updated time as a native right-aligned badge (macOS 14+) so it
+    // aligns with the system's own right-edge elements. Clicking refreshes now.
+    func refreshRow(_ snap: UsageSnapshot?) -> NSMenuItem {
+        let item = NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "")
+        item.target = self
+        guard let snap else { return item }
+        let time = stalenessHint(snap.lastUpdated).replacingOccurrences(of: "Updated ", with: "") // "2m ago"/"just now"
+        if #available(macOS 14.0, *) {
+            item.badge = NSMenuItemBadge(string: time)
+        } else {
+            item.title = "Refresh  (\(time))"
+        }
+        return item
+    }
+
+    // The usage choosers write a setter, which fires onChange -> settingsChanged() -> re-render.
+    @objc func chooseUsageWindow(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String, let w = UsageScope(rawValue: key) else { return }
+        AppSettings.shared.usageWindow = w
+    }
+
+    @objc func chooseUsageDisplay(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String, let m = UsageDisplay(rawValue: key) else { return }
+        // A dot can't be monochrome (no severity info), so promote a stale mono theme to Claude.
+        if m == .dot, AppSettings.shared.statusColorTheme == .mono {
+            AppSettings.shared.statusColorTheme = .claude
+        }
+        AppSettings.shared.usageDisplay = m
+    }
+
+    @objc func chooseColors(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String, let t = ColorTheme(rawValue: key) else { return }
+        AppSettings.shared.statusColorTheme = t
+    }
+
+    // MARK: usage indicator (shared image + title rendering)
+
+    // The utilization the indicator reflects, per the user's chosen window. Single source for the
+    // bar/dot/percent title element. Returns nil when there's no snapshot or window data.
+    func currentUtilization() -> Double? {
+        guard let snap = store.snapshot else { return nil }
+        switch AppSettings.shared.usageWindow {
+        case .session: return snap.session?.utilization
+        case .week:    return snap.week?.utilization
+        case .urgent:  // whichever present window is higher
+            switch (snap.session, snap.week) {
+            case let (s?, w?): return max(s.utilization, w.utilization)
+            case let (s?, nil): return s.utilization
+            case let (nil, w?): return w.utilization
+            default: return nil
+            }
+        }
+    }
+
+    // Threshold color for the current theme (nil == monochrome -> caller uses labelColor/template).
+    func usageThemeColor(_ util: Double) -> NSColor? {
+        UsageColors.color(level: UsageStatus.level(util), theme: AppSettings.shared.statusColorTheme)
+    }
+
+    // The bar/dot/percent element appended after the activity text. nil when no utilization is available.
+    func usageTitleElement() -> NSAttributedString? {
+        let display = AppSettings.shared.usageDisplay
+        guard display != .off, let util = currentUtilization() else { return nil } // .off hides the widget
+        let themeColor = usageThemeColor(util) // nil == mono -> template image / labelColor text
+        switch display {
+        case .off:
+            return nil // unreachable (guarded above); keeps the switch exhaustive
+        case .percent:
+            let shown = util.rounded() // color the displayed (rounded) value so number and severity agree at boundaries
+            let attrs: [NSAttributedString.Key: Any] = [
+                .foregroundColor: usageThemeColor(shown) ?? NSColor.labelColor, // theme severity color; adaptive labelColor in mono
+                .font: Self.menuBarFont,
+            ]
+            return NSAttributedString(string: "  \(Int(shown))%", attributes: attrs)
+        case .bar:
+            return attachmentString(miniBarImage(util, color: themeColor))
+        case .dot:
+            // A nil (mono) color draws an info-less template dot; fall back to a colored Claude dot.
+            let dotColor = themeColor ?? UsageColors.color(level: UsageStatus.level(util), theme: .claude)
+            return attachmentString(miniDotImage(color: dotColor))
+        }
+    }
+
+    // ~24x8 inline progress bar (track + fill). nil color => template (mono/adaptive).
+    func miniBarImage(_ util: Double, color: NSColor?) -> NSImage {
+        let w: CGFloat = 24, h: CGFloat = 8
+        let c = color ?? NSColor.labelColor
+        let img = NSImage(size: NSSize(width: w, height: h), flipped: false) { _ in
+            let track = NSRect(x: 0, y: 1, width: w, height: h - 2)
+            c.withAlphaComponent(0.25).setFill()
+            NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
+            let fillW = CGFloat(max(0, min(1, util / 100))) * w
+            if fillW > 0 {
+                c.setFill()
+                NSBezierPath(roundedRect: NSRect(x: 0, y: 1, width: fillW, height: h - 2), xRadius: 2, yRadius: 2).fill()
+            }
+            return true
+        }
+        img.isTemplate = (color == nil)
+        return img
+    }
+
+    // ~8x8 filled circle. nil color => template (mono/adaptive).
+    func miniDotImage(color: NSColor?) -> NSImage {
+        let s: CGFloat = 8
+        let img = NSImage(size: NSSize(width: s, height: s), flipped: false) { _ in
+            (color ?? NSColor.labelColor).setFill()
+            NSBezierPath(ovalIn: NSRect(x: 0, y: 0, width: s, height: s)).fill()
+            return true
+        }
+        img.isTemplate = (color == nil)
+        return img
+    }
+
+    // Wrap a small image as a text attachment, vertically centered on the cap height, with a
+    // leading gap from the text.
+    func attachmentString(_ image: NSImage) -> NSAttributedString {
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        let font = Self.menuBarFont
+        let yOffset = (font.capHeight - image.size.height) / 2
+        attachment.bounds = NSRect(x: 0, y: yOffset, width: image.size.width, height: image.size.height)
+        let result = NSMutableAttributedString(string: "  ")
+        result.append(NSAttributedString(attachment: attachment))
+        return result
     }
 
     // MARK: icon
@@ -1108,5 +1410,25 @@ final class StatusController: NSObject, NSMenuDelegate {
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
-let controller = StatusController()
+
+// Hidden self-test mode: pure-logic checks over the single AppKit binary (no XCTest).
+// Runs before StatusController() so self-tests never spawn status items or install hooks.
+if CommandLine.arguments.contains("--selftest") { exit(runSelfTests() ? 0 : 1) }
+
+let settings = AppSettings.shared
+let home = FileManager.default.homeDirectoryForCurrentUser
+let cacheURL = home.appendingPathComponent(".claude/statusbar/usage-cache.json")
+let configDir = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
+// The network floor sits just below the user's refresh interval, so a scheduled tick isn't dropped.
+let store = UsageStore(cacheURL: cacheURL, home: home, configDir: configDir,
+                       minRefresh: UsageStore.floor(forIntervalMinutes: settings.refreshIntervalMinutes))
+
+// One merged status item showing the activity glyph + usage indicator.
+let controller = StatusController(store: store)
+
+// Any global setting change re-reads prefs, re-arms the usage timer, and re-renders.
+settings.onChange = { controller.settingsChanged() }
+
+LoginItem.setEnabled(settings.launchAtLogin) // reconcile the OS login item with the stored pref
+
 app.run()
