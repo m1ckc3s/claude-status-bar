@@ -33,6 +33,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSUIElement</key><true/>
+  <key>NSAppleEventsUsageDescription</key><string>ClaudeStatusBar brings the terminal window your selected Claude Code session is running in to the front.</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
 </dict>
 </plist>

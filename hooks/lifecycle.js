@@ -20,6 +20,20 @@ fs.mkdirSync(stateDir, { recursive: true });
 const running = () => { try { cp.execSync(`pgrep -x ${EXEC}`, { stdio: "ignore" }); return true; } catch { return false; } };
 const safeId = (s) => String(s || "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64) || "unknown";
 
+// Controlling tty (for exact terminal-tab focus). Walk up the process tree to the first real
+// ttysNNN, since the hook's own stdio may be piped. "" = no tty (e.g. the desktop app).
+const ttyDev = () => {
+  try {
+    let pid = String(process.pid);
+    for (let i = 0; i < 6 && pid && pid !== "1"; i++) {
+      const [tty, ppid] = cp.execSync(`ps -o tty=,ppid= -p ${pid}`, { encoding: "utf8" }).trim().split(/\s+/);
+      if (tty && tty.startsWith("tty")) return "/dev/" + tty;
+      pid = ppid;
+    }
+  } catch {}
+  return "";
+};
+
 const writeAtomic = (file, obj) => {
   const tmp = file + "." + process.pid + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(obj));
@@ -46,7 +60,7 @@ function run() {
     // Seed an idle file: counts the session immediately, and clears any frozen state from a
     // resume (SessionStart fires on resume with no active turn). Replaces the old clearStaleState.
     try {
-      writeAtomic(statePath, { state: "idle", label: "", tool: "", project: cwd ? path.basename(cwd) : "", sessionId: id, transcript: "", entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT || "", term_program: process.env.TERM_PROGRAM || "", startedAt: 0, ts: Math.floor(Date.now() / 1000) });
+      writeAtomic(statePath, { state: "idle", label: "", tool: "", project: cwd ? path.basename(cwd) : "", sessionId: id, transcript: "", entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT || "", term_program: process.env.TERM_PROGRAM || "", tty: ttyDev(), startedAt: 0, ts: Math.floor(Date.now() / 1000) });
     } catch {}
     cp.spawn("open", ["-g", "-b", BUNDLE_ID], { stdio: "ignore", detached: true }).unref();
   } else if (event === "end") {

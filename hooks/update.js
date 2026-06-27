@@ -13,6 +13,23 @@ const dir = path.join(os.homedir(), ".claude", "statusbar");
 const stateDir = path.join(dir, "state.d");
 const event = process.argv[2] || "";
 
+// Controlling tty of this session, for exact terminal-tab focus (the app matches a Terminal/iTerm
+// tab by tty via AppleScript). Hooks run under the `claude` process, which holds the terminal's
+// tty; stdio may be piped, so walk up the process tree to the first real ttysNNN. "" = no tty
+// (e.g. the desktop app). Stable per session, so callers carry it over instead of re-running ps.
+function ttyDev() {
+  try {
+    const { execSync } = require("child_process");
+    let pid = String(process.pid);
+    for (let i = 0; i < 6 && pid && pid !== "1"; i++) {
+      const [tty, ppid] = execSync(`ps -o tty=,ppid= -p ${pid}`, { encoding: "utf8" }).trim().split(/\s+/);
+      if (tty && tty.startsWith("tty")) return "/dev/" + tty;
+      pid = ppid;
+    }
+  } catch {}
+  return "";
+}
+
 const TOOL_LABELS = {
   Bash: "Running command", Edit: "Editing", Write: "Writing", MultiEdit: "Editing",
   NotebookEdit: "Editing", Read: "Reading", Grep: "Searching", Glob: "Searching",
@@ -92,7 +109,8 @@ process.stdin.on("end", () => {
   // TERM_PROGRAM identifies the terminal app for a CLI session (Apple_Terminal, iTerm.app,
   // vscode, WezTerm, …); the app uses it to bring that terminal to the front on a row click.
   const termProgram = process.env.TERM_PROGRAM || prev.term_program || "";
-  const out = { state, label, tool: p.tool_name || "", project, sessionId: p.session_id || "", transcript: p.transcript_path || prev.transcript || "", entrypoint, term_program: termProgram, startedAt, ts };
+  const tty = prev.tty || ttyDev();
+  const out = { state, label, tool: p.tool_name || "", project, sessionId: p.session_id || "", transcript: p.transcript_path || prev.transcript || "", entrypoint, term_program: termProgram, tty, startedAt, ts };
   try {
     fs.mkdirSync(stateDir, { recursive: true });
     const tmp = statePath + "." + process.pid + ".tmp";
