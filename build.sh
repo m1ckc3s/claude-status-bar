@@ -28,11 +28,12 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleDisplayName</key><string>Claude Status Bar</string>
   <key>CFBundleIdentifier</key><string>com.local.claudestatusbar</string>
   <key>CFBundleExecutable</key><string>ClaudeStatusBar</string>
-  <key>CFBundleVersion</key><string>0.3.1</string>
-  <key>CFBundleShortVersionString</key><string>0.3.1</string>
+  <key>CFBundleVersion</key><string>0.4.0</string>
+  <key>CFBundleShortVersionString</key><string>0.4.0-beta.1</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSUIElement</key><true/>
+  <key>NSAppleEventsUsageDescription</key><string>ClaudeStatusBar brings the terminal window your selected Claude Code session is running in to the front.</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
 </dict>
 </plist>
@@ -62,12 +63,16 @@ SIGN_ID="$(security find-identity -v -p codesigning 2>/dev/null \
 # carry — codesign rejects them ("resource fork, Finder information, ... not allowed").
 xattr -cr "$APP"
 
+# The apple-events entitlement is REQUIRED for exact-terminal-tab focus: a hardened-runtime app
+# can't send Apple Events to Terminal/iTerm without it, the event is blocked before macOS can even
+# show the Automation prompt (no prompt, silent no-op). NSAppleEventsUsageDescription alone isn't enough.
+ENTITLEMENTS="ClaudeStatusBar.entitlements"
 if [[ -n "$SIGN_ID" ]]; then
   echo "Signing with Developer ID: $SIGN_ID"
-  codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP"
+  codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" --sign "$SIGN_ID" "$APP"
 else
   echo "No Developer ID cert for team $TEAM_ID found — ad-hoc signing (local dev build)."
-  codesign --force --sign - "$APP" >/dev/null 2>&1 || true
+  codesign --force --entitlements "$ENTITLEMENTS" --sign - "$APP" >/dev/null 2>&1 || true
 fi
 echo "Built $APP"
 
