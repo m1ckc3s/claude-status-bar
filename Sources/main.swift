@@ -9,6 +9,7 @@ final class ToggleView: NSView {
     private let track = CALayer()
     private let knob = CALayer()
     private var lastToggle = Date.distantPast   // debounce: ignore a re-click within a short window
+    private var hovered = false
     var isOn: Bool { didSet { updateState(animated: true) } }
     var onToggle: ((Bool) -> Void)?
 
@@ -35,8 +36,22 @@ final class ToggleView: NSView {
         return CGPoint(x: isOn ? bounds.width - kw / 2 - 2 : kw / 2 + 2, y: bounds.height / 2)
     }
 
+    // Track fill. ON = accent. OFF = an explicit mid gray (the system's faint off color disappears on a
+    // light menu, and a dynamic NSColor's .cgColor can latch the wrong appearance → white-on-white), so
+    // pick black-on-light / white-on-dark from our OWN effectiveAppearance. Hover nudges it darker.
+    private func trackColor() -> CGColor {
+        if isOn {
+            let accent = NSColor.controlAccentColor
+            return (hovered ? (accent.blended(withFraction: 0.10, of: .white) ?? accent) : accent).cgColor
+        }
+        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let base: CGFloat = dark ? 1.0 : 0.0
+        let alpha: CGFloat = (dark ? 0.30 : 0.34) + (hovered ? 0.10 : 0)
+        return NSColor(white: base, alpha: alpha).cgColor
+    }
+
     private func updateState(animated: Bool) {
-        let toColor = (isOn ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor).cgColor
+        let toColor = trackColor()
         let toPos = knobCenter()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -57,6 +72,21 @@ final class ToggleView: NSView {
         track.backgroundColor = toColor
         CATransaction.commit()
     }
+
+    // Recolor when the view actually lands in the menu (its effectiveAppearance only resolves to the
+    // menu's light/dark then, not at init), so the off gray matches the menu it's drawn on.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateState(animated: false)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = true; updateState(animated: false) }
+    override func mouseExited(with event: NSEvent) { hovered = false; updateState(animated: false) }
 
     override func mouseDown(with event: NSEvent) {
         guard Date().timeIntervalSince(lastToggle) > 0.1 else { return }
@@ -103,7 +133,7 @@ final class SessionRowView: NSView {
         nameField.frame = NSRect(x: pad + iconSize + 8, y: (rowH - 16) / 2, width: 160, height: 16)
         nameField.autoresizingMask = [.maxXMargin]
         addSubview(nameField)
-        timerField.font = NSFont.monospacedSystemFont(ofSize: NSFont.menuFont(ofSize: 0).pointSize, weight: .regular)
+        timerField.font = NSFont.monospacedSystemFont(ofSize: NSFont.menuFont(ofSize: 0).pointSize - 2, weight: .regular)
         timerField.textColor = .secondaryLabelColor
         timerField.alignment = .right
         timerField.autoresizingMask = [.minXMargin]
@@ -177,8 +207,9 @@ final class StatusController: NSObject, NSMenuDelegate {
     var notNeededSince: Date?
     let launchGrace: TimeInterval = 5   // settle time after launch before we may quit
     let idleQuitDelay: TimeInterval = 3 // "not needed" must persist this long before quitting
-    // "Hide idle after" setting (seconds): drop a resting session from the list once it's been quiet
-    // this long. 0 = Never. Defaults to 30 min.
+    // "Hide idle after" setting (seconds): hide a resting session's ROW once it's been quiet this long.
+    // Render-only — it never deletes the file or affects liveness (that's pid-driven now), and the
+    // most-recent session is always kept visible (floor at one). 0 = Never. Defaults to 30 min.
     var stalePruneAge: TimeInterval { UserDefaults.standard.object(forKey: "hideIdleAfter") as? Double ?? 1800 }
 
     // One parsed entry per live session file (state.d/<id>.json), refreshed each tick.
@@ -186,6 +217,9 @@ final class StatusController: NSObject, NSMenuDelegate {
         var id: String, state: String, label: String, project: String, transcript: String
         var entrypoint: String  // CLAUDE_CODE_ENTRYPOINT: "cli", "claude-desktop", …
         var termProgram: String // TERM_PROGRAM for CLI sessions: "Apple_Terminal", "iTerm.app", …
+        var pid: Int32          // the session's `claude` process; kill(pid,0) drives liveness. 0 = pre-upgrade file.
+        var started: Bool       // true once the session had real activity (a prompt/tool); a merely-opened
+                                // conversation seeds started=false and stays out of the dropdown.
         var tty: String         // controlling tty (e.g. /dev/ttys003) for exact terminal-tab focus
         var startedAt: Double, ts: Double
         var eff: String = ""   // effective state, recomputed once per tick in evaluate()
@@ -198,6 +232,8 @@ final class StatusController: NSObject, NSMenuDelegate {
             self.transcript = o["transcript"] as? String ?? ""
             self.entrypoint = o["entrypoint"] as? String ?? ""
             self.termProgram = o["term_program"] as? String ?? ""
+            self.pid = Int32(truncatingIfNeeded: (o["pid"] as? NSNumber)?.intValue ?? 0)
+            self.started = o["started"] as? Bool ?? false
             self.tty = o["tty"] as? String ?? ""
             self.startedAt = (o["startedAt"] as? NSNumber)?.doubleValue ?? 0
             self.ts = (o["ts"] as? NSNumber)?.doubleValue ?? 0
@@ -238,6 +274,9 @@ final class StatusController: NSObject, NSMenuDelegate {
     lazy var codeGlyphMasks: [NSImage] = codeGlyphs.map { StatusController.glyphMask($0) }
     let crabFPS: Double = 12.5 // matches the source GIF's 0.08s frame delay
     lazy var crabFrames: [NSImage] = StatusController.decodePNGs(clawdCrabFramePNGs)
+    // Template frames: bright pixels (white eyes) become transparent holes so they're
+    // visible as negative space against the menu bar in System color mode.
+    lazy var crabTemplateFrames: [NSImage] = crabFrames.map { adaptiveCrabFrame($0) }
     var fps: Double {
         switch animStyle {
         case .web: return spriteFPS
@@ -414,10 +453,32 @@ final class StatusController: NSObject, NSMenuDelegate {
         checkForUpdate() // refreshes the update cache for next open (gated to once a day)
 
         sessionMenuItems.removeAll()
-        if !sessions.isEmpty {
+        let now = Date().timeIntervalSince1970
+        // Gate ONLY the desktop app: opening/clicking a conversation there seeds an idle session without
+        // real activity (the click-through clutter), so a desktop session stays out of the dropdown until
+        // a prompt/tool fires (started=true). CLI / terminal / editor sessions are launched deliberately,
+        // so they surface the moment they start. Any active state counts as started too (and covers
+        // pre-upgrade files with no flag).
+        let allOrdered = sessions.values.sorted { $0.ts > $1.ts }   // most-recent first
+        let ordered = allOrdered.filter { s in
+                let eff = s.eff.isEmpty ? effectiveState(s, now: now) : s.eff
+                let resting = !(eff == "permission" || eff == "thinking" || eff == "tool")
+                let gated = s.entrypoint == "claude-desktop"   // only the desktop app is gated
+                return !gated || s.started || !resting
+            }
+        // Hide rows idle past the threshold, but ALWAYS keep the most-recent started session (floor at
+        // one) so the dropdown never goes empty while a session is alive. Hiding is render-only; the file
+        // (and thus liveness) is untouched — see stalePruneAge and the pid-driven reap in evaluate().
+        var visible = ordered.filter { s in
+            let eff = s.eff.isEmpty ? effectiveState(s, now: now) : s.eff
+            let resting = !(eff == "permission" || eff == "thinking" || eff == "tool")
+            return !(stalePruneAge > 0 && resting && now - s.ts > stalePruneAge)
+        }
+        if visible.isEmpty, let lead = ordered.first { visible = [lead] }   // floor: never empty while alive
+
+        if !visible.isEmpty {
             menu.addItem(header("Sessions"))
-            for s in sessions.values.sorted(by: { $0.ts > $1.ts }) {
-                let now = Date().timeIntervalSince1970
+            for s in visible {
                 let eff = s.eff.isEmpty ? effectiveState(s, now: now) : s.eff
                 let view = SessionRowView(id: s.id, width: CGFloat(uiConfig()["boxWidth"] ?? 300))
                 let sid = s.id, ep = s.entrypoint, tp = s.termProgram, ty = s.tty
@@ -428,6 +489,13 @@ final class StatusController: NSObject, NSMenuDelegate {
                 menu.addItem(it)
                 sessionMenuItems.append((it, s.id))  // kept so tick() can live-update the timers
             }
+            menu.addItem(.separator())
+        } else if claudeDesktopRunning() {
+            // No live session to pin, but the desktop app is up — give a way to jump back in.
+            menu.addItem(header("Sessions"))
+            let open = NSMenuItem(title: "Open Claude", action: #selector(openClaude), keyEquivalent: "")
+            open.target = self
+            menu.addItem(open)
             menu.addItem(.separator())
         }
 
@@ -442,8 +510,6 @@ final class StatusController: NSObject, NSMenuDelegate {
             self?.playCompletionSound = on
             UserDefaults.standard.set(on, forKey: "completionSound")
         })
-
-        menu.addItem(.separator())
 
         let animParent = NSMenuItem(title: "Animation Style", action: nil, keyEquivalent: "")
         let animSub = NSMenu()
@@ -511,8 +577,13 @@ final class StatusController: NSObject, NSMenuDelegate {
         let row = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         row.autoresizingMask = [.width]
 
-        let label = NSTextField(labelWithString: title)
-        label.font = .menuFont(ofSize: 0)
+        // Dim a trailing parenthetical (e.g. the "(1m+)" qualifier) so it reads as a secondary note.
+        let labelFont = NSFont.menuFont(ofSize: 0)
+        let attr = NSMutableAttributedString(string: title, attributes: [.font: labelFont, .foregroundColor: NSColor.labelColor])
+        if let r = title.range(of: " (") {
+            attr.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: NSRange(r.lowerBound..<title.endIndex, in: title))
+        }
+        let label = NSTextField(labelWithAttributedString: attr)
         label.sizeToFit()
         label.setFrameOrigin(NSPoint(x: leftInset, y: (height - label.frame.height) / 2))
         label.autoresizingMask = [.maxXMargin]
@@ -561,7 +632,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         let resting = !(eff == "permission" || eff == "thinking" || eff == "tool")  // the dim caret
         let tag = surfaceTag(s.entrypoint)
         v.configure(icon: sessionSymbol(s, eff: eff),
-                    iconTint: resting ? .tertiaryLabelColor : nil,  // caret dim; spinner uses default; amber ignores tint
+                    iconTint: resting ? .tertiaryLabelColor : .labelColor,  // caret dim; spinner matches the name font; amber image ignores tint
                     name: truncated(sessionName(s), max: nameMax, keep: nameMax),
                     timer: working ? elapsed(max(0, Int(now - s.startedAt))) : nil,
                     pillNormal: tag.isEmpty ? nil : pillImage(tag),
@@ -873,8 +944,13 @@ final class StatusController: NSObject, NSMenuDelegate {
         for id in Array(sessions.keys) {
             guard var s = sessions[id] else { continue }
             s.eff = effectiveState(s, now: now)   // compute once per tick; the menu + tooltip reuse it
-            if s.eff == "idle", stalePruneAge > 0, now - s.ts > stalePruneAge {
-                // genuinely-quiet resting session: drop it. update.js rewrites the file if it acts again.
+            // Reap on PROCESS death, not idle time: a session leaves only when its `claude` process is
+            // gone (closed/crashed terminal, quit app), so an idle-but-open session stays and the icon
+            // holds. Pre-upgrade files have no pid (0) — fall back to the old idle+age prune so they
+            // can't linger forever. This is also what keeps state.d self-cleaning (no growing cache).
+            let dead = s.pid > 0 ? !pidAlive(s.pid)
+                                 : (s.eff == "idle" && stalePruneAge > 0 && now - s.ts > stalePruneAge)
+            if dead {
                 try? FileManager.default.removeItem(atPath: (stateDir as NSString).appendingPathComponent(id + ".json"))
                 sessions[id] = nil; fileMTimes[id + ".json"] = nil; soundPrev[id] = nil; turnStart[id] = nil
                 continue
@@ -939,6 +1015,13 @@ final class StatusController: NSObject, NSMenuDelegate {
     }
 
     func sessionCount() -> Int { stateFileNames().count }
+
+    // Liveness probe: is this session's `claude` process still alive? kill(pid,0) returns 0 if the
+    // process exists; EPERM = exists but not ours (won't happen, same user); ESRCH = gone.
+    func pidAlive(_ pid: Int32) -> Bool {
+        if pid <= 0 { return false }
+        return kill(pid, 0) == 0 || errno == EPERM
+    }
 
     // Stay while Claude desktop is open OR a session is active; otherwise quit after a
     // short debounced grace (warmup-session churn must not kill us).
@@ -1042,7 +1125,7 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     func iconImage(color: NSColor?, frame: Int) -> NSImage {
         if animStyle == .web { return tint(frames, color: color, frame: frame) }
-        if animStyle == .crab { return crabIcon(frame: frame) }
+        if animStyle == .crab { return crabIcon(color: color, frame: frame) }
         let i = (frame / codeSub) % codeGlyphs.count
         let local = (CGFloat(frame % codeSub) + 0.5) / CGFloat(codeSub) // 0…1 within this glyph
         // Scale envelope per glyph: rise, hold at peak, fall, so each lands before the swap.
@@ -1106,23 +1189,27 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     let logoSet: [NSImage] = Data(base64Encoded: claudeLogoPNG).flatMap(NSImage.init(data:)).map { [$0] } ?? []
     func restingIcon(color: NSColor?) -> NSImage {
-        if animStyle == .crab { return crabIcon(frame: 0) }
+        if animStyle == .crab { return crabIcon(color: color, frame: 0) }
         return tint(logoSet.isEmpty ? frames : logoSet, color: color, frame: 0)
     }
 
-    // Full color (isTemplate=false), so the Orange/System color setting does NOT apply here.
-    func crabIcon(frame: Int) -> NSImage {
+    // nil color (System) => adaptive shaded template (see adaptiveCrabFrame in CrabRender.swift);
+    // non-nil (Orange) => the original full-color sprite, drawn as-is.
+    func crabIcon(color: NSColor?, frame: Int) -> NSImage {
         guard !crabFrames.isEmpty else { return NSImage(size: NSSize(width: 18, height: 18)) }
-        let src = crabFrames[frame % crabFrames.count]
+        let pool = color == nil ? crabTemplateFrames : crabFrames
+        let src = pool[frame % pool.count]
         let rep = src.representations.first
         let pw = CGFloat(rep?.pixelsWide ?? Int(src.size.width))
         let ph = CGFloat(rep?.pixelsHigh ?? Int(src.size.height))
         let h: CGFloat = 18, w = (ph > 0 ? h * (pw / ph) : h)
+        // Orange mode: draw the original PNG as-is (preserves black eyes on orange body).
+        // System mode: draw the pre-processed template (dark pixels → transparent holes).
         let img = NSImage(size: NSSize(width: w, height: h), flipped: false) { rect in
             src.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
             return true
         }
-        img.isTemplate = false
+        img.isTemplate = (color == nil)
         return img
     }
 

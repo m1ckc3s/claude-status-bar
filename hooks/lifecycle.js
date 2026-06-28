@@ -60,7 +60,10 @@ function run() {
     // Seed an idle file: counts the session immediately, and clears any frozen state from a
     // resume (SessionStart fires on resume with no active turn). Replaces the old clearStaleState.
     try {
-      writeAtomic(statePath, { state: "idle", label: "", tool: "", project: cwd ? path.basename(cwd) : "", sessionId: id, transcript: "", entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT || "", term_program: process.env.TERM_PROGRAM || "", tty: ttyDev(), startedAt: 0, ts: Math.floor(Date.now() / 1000) });
+      // started:false — a merely-opened conversation seeds this for launch + liveness but stays out of
+      // the dropdown until it has real activity (update.js flips started:true on a prompt/tool).
+      // tty: the session's controlling terminal, for exact tab focus on a row click.
+      writeAtomic(statePath, { state: "idle", label: "", tool: "", project: cwd ? path.basename(cwd) : "", sessionId: id, transcript: "", entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT || "", term_program: process.env.TERM_PROGRAM || "", pid: process.ppid, started: false, tty: ttyDev(), startedAt: 0, ts: Math.floor(Date.now() / 1000) });
     } catch {}
     cp.spawn("open", ["-g", "-b", BUNDLE_ID], { stdio: "ignore", detached: true }).unref();
   } else if (event === "end") {
