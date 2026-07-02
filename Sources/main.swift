@@ -254,6 +254,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     enum AnimStyle: String { case web, code, crab }
     var animStyle: AnimStyle = .web
     var showTimer = false
+    var showStatusText = true // show the "Thinking…"/"Running Code"/etc. label; off = icon (+ timer) only
     var iconSystem = false // false = brand Orange; true = adaptive black/white (template image)
     var playCompletionSound = false // chime when a turn longer than ~5 min finishes
     var useThinkingWords = true     // rotate a playful verb ("Manifesting…") in place of "Thinking…"
@@ -322,6 +323,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         super.init()
         let d = UserDefaults.standard
         if d.object(forKey: "showTimer") != nil { showTimer = d.bool(forKey: "showTimer") }
+        if d.object(forKey: "showStatusText") != nil { showStatusText = d.bool(forKey: "showStatusText") }
         if d.object(forKey: "iconSystem") != nil { iconSystem = d.bool(forKey: "iconSystem") }
         if d.object(forKey: "completionSound") != nil { playCompletionSound = d.bool(forKey: "completionSound") }
         if d.object(forKey: "thinkingWords") != nil { useThinkingWords = d.bool(forKey: "thinkingWords") }
@@ -525,6 +527,11 @@ final class StatusController: NSObject, NSMenuDelegate {
         menu.addItem(toggleRow(title: "Show timer", isOn: showTimer) { [weak self] on in
             self?.showTimer = on
             UserDefaults.standard.set(on, forKey: "showTimer")
+            self?.applyTitle()
+        })
+        menu.addItem(toggleRow(title: "Show status text", isOn: showStatusText) { [weak self] on in
+            self?.showStatusText = on
+            UserDefaults.standard.set(on, forKey: "showStatusText")
             self?.applyTitle()
         })
         menu.addItem(toggleRow(title: "Completion sound", qualifier: "5min+", isOn: playCompletionSound) { [weak self] on in
@@ -1077,9 +1084,10 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     func applyTitle() {
         guard let button = statusItem.button else { return }
-        var text = activeBase
+        var text = showStatusText ? activeBase : ""
         if showTimer, startedAt > 0 {
-            text += "  " + elapsed(max(0, Int(Date().timeIntervalSince1970 - startedAt)))
+            let clock = elapsed(max(0, Int(Date().timeIntervalSince1970 - startedAt)))
+            text = text.isEmpty ? clock : text + "  " + clock
         }
         if text.isEmpty {
             button.imagePosition = .imageOnly
