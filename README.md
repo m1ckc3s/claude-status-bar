@@ -32,7 +32,8 @@ A tiny macOS menu bar app that shows **Claude Code's live status**: an animated 
 Everything is controlled from the menu:
 
 - **Show timer:** toggle the elapsed `1m 1s` clock.
-- **Play completion sound:** a soft chime when a turn longer than a minute finishes (off by default).
+- **Play completion sound:** a soft chime when a turn longer than five minutes finishes (off by default).
+- **Thinking words:** rotate a playful verb (`Manifesting…`, `Percolating…`) in place of `Thinking…`, like Claude Code (on by default).
 - **Animation style:**
   - **Claude Spark**, the web/chat "morph" spark
   - **Claude Code**, the terminal glyph spinner
