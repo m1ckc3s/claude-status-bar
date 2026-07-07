@@ -962,13 +962,28 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     func renderResting() { render(label: "", color: iconColor, animate: false, startedAt: 0) }
 
-    // Per-session effective state with two recovery nets: an absolute age cap, plus the transcript
+    // Per-session effective state with two recovery nets: an absolute quiet cap, plus the transcript
     // "interrupted by user" marker (Esc / denied permission fire no hook, freezing the file). "done"
     // collapses to rest.
+    //
+    // Ctrl+C mid-reasoning fires no hook AND appends nothing to the transcript (unlike Esc, which
+    // writes the marker below), so the only tell is sustained silence on BOTH clocks: the last hook
+    // write (ts) and the transcript mtime. A live turn flushes a transcript line every time a content
+    // block completes (observed gaps < ~3 min), so 300s of total silence means the turn is dead. A
+    // rare longer block self-heals: this is recomputed every tick, so the next flush pops the session
+    // back to thinking with its original timer.
     func effectiveState(_ s: Session, now: Double) -> String {
         if s.state == "thinking" || s.state == "tool" || s.state == "permission" {
-            let cap: Double = s.state == "permission" ? 7200 : 900
-            if now - s.ts > cap { return "idle" }
+            let mtime = transcriptMTime(s)
+            // min(..., now) guards a future mtime (clock skew / network volume).
+            let quiet = now - min(max(s.ts, mtime ?? 0), now)
+            let cap: Double
+            switch s.state {
+            case "permission": cap = 7200 // waiting on the user legitimately writes nothing: never tighten
+            case "thinking": cap = mtime != nil ? 300 : 900 // no mtime signal -> keep the wide net
+            default: cap = 900 // "tool": a long build writes nothing until it ends
+            }
+            if quiet > cap { return "idle" }
             if !s.transcript.isEmpty, let last = lastTurnLine(ofFileAt: s.transcript),
                last.contains("interrupted by user") { return "idle" }
             return s.state
@@ -1043,6 +1058,16 @@ final class StatusController: NSObject, NSMenuDelegate {
         return s.split(separator: "\n").last {
             $0.contains("\"type\":\"user\"") || $0.contains("\"type\":\"assistant\"")
         }.map(String.init)
+    }
+
+    // Transcript mtime as a liveness clock: a live turn flushes a line every time a content block
+    // completes, an interrupted one never writes again. nil = no transcript / stat failed
+    // (pre-upgrade state file, deleted transcript) -> caller keeps the wide net.
+    func transcriptMTime(_ s: Session) -> Double? {
+        guard !s.transcript.isEmpty,
+              let attrs = try? FileManager.default.attributesOfItem(atPath: s.transcript),
+              let m = attrs[.modificationDate] as? Date else { return nil }
+        return m.timeIntervalSince1970
     }
 
     // MARK: render

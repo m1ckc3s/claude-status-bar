@@ -3,6 +3,11 @@
 All notable changes to Claude Status Bar are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- Ctrl+C during the reasoning phase no longer leaves the icon stuck on a thinking word. Claude Code emits no hook or transcript signal for that interrupt, so the app now watches the transcript's modification time as a liveness clock: a live turn keeps flushing lines, an interrupted one goes silent. The icon rests within ~5 minutes of the interrupt (Esc still recovers immediately).
+
 ## [0.3.2] - 2026-07-02
 
 ### Added
