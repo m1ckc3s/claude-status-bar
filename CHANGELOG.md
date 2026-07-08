@@ -3,6 +3,11 @@
 All notable changes to Claude Status Bar are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- Only one instance of the app runs at a time. When a second copy exists on disk (an old copy in Downloads, a build next to the installed app), the session-start hook's launch-by-bundle-ID could start it alongside the running one, showing two menu bar icons. A new instance now quits immediately if one is already running, and a running instance quits older copies (which lack the guard) that launch after it.
+
 ## [0.3.2] - 2026-07-02
 
 ### Added

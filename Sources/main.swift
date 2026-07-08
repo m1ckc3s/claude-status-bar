@@ -1003,10 +1003,29 @@ final class StatusController: NSObject, NSMenuDelegate {
         return kill(pid, 0) == 0 || errno == EPERM
     }
 
+    // Evict twin instances that appear AFTER us — older builds have no launch guard, so the
+    // incumbent has to quit them. Polled from the tick because NSWorkspace's launch notifications
+    // are never posted for accessory (LSUIElement) apps like this one; the query is the same cost
+    // as the claudeDesktopRunning() enumeration the tick already does. The elder instance wins
+    // (launchDate, pid as tie-break), so two guarded copies can never evict each other.
+    func evictTwins() {
+        guard let bid = Bundle.main.bundleIdentifier else { return }
+        let me = NSRunningApplication.current
+        for other in NSRunningApplication.runningApplications(withBundleIdentifier: bid)
+        where other.processIdentifier != me.processIdentifier {
+            let mine = me.launchDate ?? .distantPast
+            let theirs = other.launchDate ?? .distantPast
+            if theirs > mine || (theirs == mine && other.processIdentifier > me.processIdentifier) {
+                other.terminate()   // polite quit; same-bundle-ID only, never another app
+            }
+        }
+    }
+
     // Stay while Claude desktop is open OR a session is active; otherwise quit after a
     // short debounced grace (warmup-session churn must not kill us).
     func checkLifecycle() {
         let now = Date()
+        evictTwins()
         if now.timeIntervalSince(launchedAt) < launchGrace { return }
         if claudeDesktopRunning() || sessionCount() > 0 {
             notNeededSince = nil
@@ -1224,5 +1243,16 @@ final class StatusController: NSObject, NSMenuDelegate {
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
+
+// Single-instance guard. The SessionStart hook launches the app by bundle ID, and LaunchServices'
+// "already running" check is per app PATH — so a second copy on disk (a dev build next to the
+// /Applications release, a stray copy in Downloads, a mounted DMG) gets launched alongside the
+// running one and the menu bar shows two icons. If a twin is already running, defer to it.
+let myPID = ProcessInfo.processInfo.processIdentifier
+if let bid = Bundle.main.bundleIdentifier,
+   NSRunningApplication.runningApplications(withBundleIdentifier: bid)
+       .contains(where: { $0.processIdentifier != myPID }) {
+    exit(0)
+}
 let controller = StatusController()
 app.run()
