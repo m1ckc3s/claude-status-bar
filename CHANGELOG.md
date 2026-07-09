@@ -9,6 +9,15 @@ All notable changes to Claude Status Bar are documented here. This project follo
 - **Session rows show the git branch** next to the project name ("myrepo · fix-auth"), read straight from `.git/HEAD` — no `git` invocation, works for worktrees, shows a short SHA when detached, shows nothing outside a repo.
 - **Same-named projects are told apart.** When two live sessions share a folder name (two clones or worktrees of one repo), rows qualify it with the parent folder: "work/myrepo" vs "tmp/myrepo". Hovering a row shows the full path.
 
+## [0.3.3] - 2026-07-08
+
+### Changed
+- The working spinner in the dropdown is now the native macOS spinner. It is smoother and looks cleaner, especially in dark mode.
+- Menu cleanup: Animation and Color are their own menu items now, instead of one combined Settings menu. Idle sessions hide after a fixed 15 minutes (the interval picker was removed).
+
+### Removed
+- The completion sound, and its toggle.
+
 ## [0.3.2] - 2026-07-02
 
 ### Added
@@ -114,6 +123,7 @@ All notable changes to Claude Status Bar are documented here. This project follo
 - Signed and notarized DMG so it opens without a Gatekeeper warning.
 - Claude Code plugin marketplace manifest for the plugin install path.
 
+[0.3.3]: https://github.com/m1ckc3s/claude-status-bar/releases/tag/v0.3.3
 [0.3.2]: https://github.com/m1ckc3s/claude-status-bar/releases/tag/v0.3.2
 [0.3.1]: https://github.com/m1ckc3s/claude-status-bar/releases/tag/v0.3.1
 [0.3.0]: https://github.com/m1ckc3s/claude-status-bar/releases/tag/v0.3.0

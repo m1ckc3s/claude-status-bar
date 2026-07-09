@@ -1,7 +1,7 @@
 {
   "name": "claude-status-bar",
   "description": "Menu bar status indicator for Claude Code: animated spark, elapsed timer, and open/close lifecycle.",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "homepage": "https://github.com/m1ckc3s/claude-status-bar",
   "license": "MIT"
 }
