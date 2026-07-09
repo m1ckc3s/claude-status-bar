@@ -45,11 +45,8 @@ Test it on both surfaces, because they behave differently:
 - the **Claude desktop app**, and
 - the **CLI, in a terminal**.
 
-And tell me which terminal you used (Terminal.app, Ghostty, iTerm2, WezTerm, and so on). Behavior genuinely differs between them, so "works for me" without naming the terminal doesn't tell me much. For any visual or timing change, attach a screenshot or a short screen recording.
+And tell me which terminal you used (Terminal.app, Ghostty, iTerm2, WezTerm, and so on). Behavior genuinely differs between them. For any visual or timing change, attach a screenshot or a short screen recording.
 
-## AI-assisted contributions
-
-AI tools are welcome, I use them too. But you own the code you submit: review every line, be able to explain why it's correct, and remove AI attribution footers (the `🤖 Generated with…` lines). A PR that's an unreviewed AI dump you can't defend will be closed, however tidy it looks.
 
 ## What to expect
 
