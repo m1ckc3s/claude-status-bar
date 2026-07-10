@@ -35,11 +35,15 @@ function run() {
   try { const j = JSON.parse(input); id = j.session_id; cwd = j.cwd || ""; } catch {}
   id = safeId(id);
   const statePath = path.join(stateDir, id + ".json");
+  const agentsDir = path.join(stateDir, id + ".agents.d");
 
   if (event === "start") {
     // If the app isn't running, any leftover session files are stale (e.g. a prior
-    // crash) — clear them so the count starts honest.
-    if (!running()) { try { for (const f of fs.readdirSync(stateDir)) fs.rmSync(path.join(stateDir, f), { force: true }); } catch {} }
+    // crash) — clear them so the count starts honest. recursive: the sweep must not
+    // abort on <sid>.agents.d directories (rmSync throws EISDIR on them otherwise).
+    if (!running()) { try { for (const f of fs.readdirSync(stateDir)) fs.rmSync(path.join(stateDir, f), { recursive: true, force: true }); } catch {} }
+    // A session start (open/resume/clear) has no active turn, so no live subagents.
+    try { fs.rmSync(agentsDir, { recursive: true, force: true }); } catch {}
     // Seed an idle file: counts the session immediately, and clears any frozen state from a
     // resume (SessionStart fires on resume with no active turn).
     try {
@@ -52,6 +56,7 @@ function run() {
     // Removing the file drops this session from the aggregate — this is also what recovers a
     // frozen animation on force-quit (SessionEnd fires, but no Stop). No state rewrite needed.
     try { fs.rmSync(statePath, { force: true }); } catch {}
+    try { fs.rmSync(agentsDir, { recursive: true, force: true }); } catch {}
   }
   process.exit(0);
 }

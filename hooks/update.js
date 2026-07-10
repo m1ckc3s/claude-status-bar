@@ -14,7 +14,7 @@ const TOOL_LABELS = {
   Bash: "Running command", Edit: "Editing", Write: "Writing", MultiEdit: "Editing",
   NotebookEdit: "Editing", Read: "Reading", Grep: "Searching", Glob: "Searching",
   WebFetch: "Browsing web", WebSearch: "Searching web", Task: "Delegating",
-  TodoWrite: "Planning",
+  Agent: "Delegating", TodoWrite: "Planning",
 };
 
 const safeId = (s) => String(s || "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64) || "unknown";
@@ -77,6 +77,10 @@ process.stdin.on("end", () => {
       // Desktop-app permission signal; not redundant with notify (that's CLI-only).
       state = "permission"; label = "Awaiting permission"; startedAt = 0; break;
     case "stop":
+      // NOTE: running-subagent files (<sid>.agents.d/, written by agents.js) deliberately survive
+      // the turn: subagents run in the BACKGROUND and outlive the parent's turn — Stop fires
+      // seconds after the spawn while they're still working. Their files are removed by their
+      // own SubagentStop; lifecycle.js clears the dir at session boundaries.
       state = "done"; label = "Done"; startedAt = 0; break;
     default:
       return;

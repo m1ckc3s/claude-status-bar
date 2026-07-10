@@ -13,6 +13,7 @@ const sbDir = path.join(home, ".claude", "statusbar");
 const MARKER = sbDir; // every hook command we add points inside this dir
 const updateDest = path.join(sbDir, "update.js");
 const lifecycleDest = path.join(sbDir, "lifecycle.js");
+const agentsDest = path.join(sbDir, "agents.js");
 const settingsPath = path.join(home, ".claude", "settings.json");
 const node = process.execPath;
 
@@ -29,9 +30,11 @@ fs.rmSync(path.join(sbDir, "state.json"), { force: true });
 fs.rmSync(path.join(sbDir, "sessions.d"), { recursive: true, force: true });
 fs.copyFileSync(path.join(__dirname, "update.js"), updateDest);
 fs.copyFileSync(path.join(__dirname, "lifecycle.js"), lifecycleDest);
+fs.copyFileSync(path.join(__dirname, "agents.js"), agentsDest);
 
 const cmd = (evt) => `${node} ${updateDest} ${evt}`;
 const life = (evt) => `${node} ${lifecycleDest} ${evt}`;
+const agents = (evt) => `${node} ${agentsDest} ${evt}`;
 
 let settings = {};
 if (fs.existsSync(settingsPath)) {
@@ -65,11 +68,14 @@ addMatched("PostToolUse", cmd("post"));
 addUnmatched("Notification", cmd("notify"));
 addMatched("PermissionRequest", cmd("permreq"));
 addUnmatched("Stop", cmd("stop"));
+// Subagent hooks (one file per running subagent; drives the indented rows in the dropdown)
+addUnmatched("SubagentStart", agents("start"));
+addUnmatched("SubagentStop", agents("stop"));
 // Lifecycle hooks (launch the app on open; the app quits itself when no longer needed)
 addUnmatched("SessionStart", life("start"));
 addUnmatched("SessionEnd", life("end"));
 
 fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 console.log("Installed status-bar hooks into", settingsPath);
-console.log("Scripts:", updateDest, "and", lifecycleDest);
+console.log("Scripts:", updateDest + ",", lifecycleDest, "and", agentsDest);
 console.log("Backup (first run only):", settingsPath + ".bak-statusbar");
