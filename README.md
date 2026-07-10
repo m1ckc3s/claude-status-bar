@@ -38,8 +38,7 @@ Everything is controlled from the menu:
 | Claude Code CLI (terminal) | ✅ |
 | Claude Code Desktop — **Code** tab | ✅ |
 | Cursor (Claude Code extension) | ✅ |
-| Claude Desktop — **Chat** tab | ❌ |
-| **Cowork** | ❌ |
+| Claude Desktop — **Chat/Cowork** tab | ❌ |
 
 ## Install
 
