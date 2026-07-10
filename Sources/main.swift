@@ -246,6 +246,89 @@ final class SessionRowView: NSView {
     override func mouseDown(with event: NSEvent) { onClick?() }
 }
 
+// Indented mini-row under a session: [● dot] "agentType · task…"  <spacer>  timer.
+// One per RUNNING subagent. The dot follows Claude Code's own task-list styling: dim grey
+// while running, green once finished. Not clickable (no highlight/tracking): it's a status
+// readout, not a target — there is nowhere to jump for a subagent.
+final class AgentRowView: NSView {
+    let sessionId: String, agentId: String
+    private let iconView = NSImageView()     // the status dot
+    private let nameField = NSTextField(labelWithString: "")
+    private let timerField = NSTextField(labelWithString: "")
+    private let pad: CGFloat = 14, iconSize: CGFloat = 16
+    private let rowH: CGFloat
+    private var finished = false
+
+    init(sessionId: String, agentId: String, width: CGFloat, rowH: CGFloat, indent: CGFloat) {
+        self.sessionId = sessionId; self.agentId = agentId; self.rowH = rowH
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: rowH))
+        autoresizingMask = [.width]
+        let iconX = pad + indent
+        iconView.frame = NSRect(x: iconX, y: (rowH - iconSize) / 2, width: iconSize, height: iconSize)
+        iconView.imageScaling = .scaleNone   // the dot renders at its natural (small) size, centered
+        iconView.autoresizingMask = [.maxXMargin]
+        addSubview(iconView)
+        let font = NSFont.menuFont(ofSize: NSFont.menuFont(ofSize: 0).pointSize - 2)
+        nameField.font = font
+        nameField.lineBreakMode = .byTruncatingTail
+        nameField.frame = NSRect(x: iconX + iconSize + 6, y: (rowH - 16) / 2, width: 160, height: 16)
+        nameField.autoresizingMask = [.maxXMargin]
+        addSubview(nameField)
+        timerField.font = NSFont.monospacedSystemFont(ofSize: font.pointSize, weight: .regular)
+        timerField.textColor = .tertiaryLabelColor
+        timerField.alignment = .right
+        timerField.autoresizingMask = [.minXMargin]
+        addSubview(timerField)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(dot: NSImage?, agentType: String, task: String, timer: String, rightInset: CGFloat, timerGap: CGFloat) {
+        if finished { return }   // settled: green dot, dimmed text, no timer
+        iconView.image = dot
+        renderName(agentType: agentType, task: task)
+        timerField.stringValue = timer
+        let tfont = timerField.font ?? NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let tw = ceil(timer.size(withAttributes: [.font: tfont]).width) + 2
+        // Same baseline alignment as the session row: the mono timer sits on the text's baseline.
+        let nf = nameField.font ?? NSFont.menuFont(ofSize: 0)
+        let baseline = { (f: NSFont) in (16 - (f.ascender - f.descender)) / 2 - f.descender }
+        let dy = baseline(nf) - baseline(tfont)
+        timerField.frame = NSRect(x: bounds.width - rightInset - tw, y: (rowH - 16) / 2 + dy, width: tw, height: 16)
+        nameField.frame.size.width = max(40, timerField.frame.minX - timerGap - nameField.frame.minX)
+    }
+    private func renderName(agentType: String, task: String) {
+        let para = NSMutableParagraphStyle()
+        para.lineBreakMode = .byTruncatingTail
+        para.allowsDefaultTighteningForTruncation = false  // constant tracking, honest ellipsis (see SessionRowView)
+        let font = nameField.font ?? NSFont.menuFont(ofSize: 0)
+        let text = NSMutableAttributedString(string: agentType, attributes: [
+            .font: font, .paragraphStyle: para,
+            .foregroundColor: finished ? NSColor.tertiaryLabelColor : .secondaryLabelColor,
+        ])
+        if !task.isEmpty {
+            text.append(NSAttributedString(string: " · " + task, attributes: [
+                .font: font, .paragraphStyle: para,
+                .foregroundColor: NSColor.tertiaryLabelColor,
+            ]))
+        }
+        nameField.attributedStringValue = text
+    }
+    // The agent finished while the menu is open. NSMenu can't remove items mid-track, so the row
+    // settles in place: green dot, dimmed text, timer hidden (elapsed time only means something
+    // while it's still climbing). The next menu open simply doesn't rebuild the row.
+    func markFinished(dot: NSImage?) {
+        guard !finished else { return }
+        finished = true
+        iconView.image = dot
+        timerField.isHidden = true
+        // Re-dim the type text (task text is already tertiary).
+        if let s = nameField.attributedStringValue.mutableCopy() as? NSMutableAttributedString {
+            s.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: NSRange(location: 0, length: s.length))
+            nameField.attributedStringValue = s
+        }
+    }
+}
+
 final class StatusController: NSObject, NSMenuDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let stateDir = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/statusbar/state.d")
@@ -292,12 +375,37 @@ final class StatusController: NSObject, NSMenuDelegate {
             self.ts = (o["ts"] as? NSNumber)?.doubleValue ?? 0
         }
     }
+    // One RUNNING subagent of a session (a file in <sid>.agents.d/, written by agents.js on
+    // SubagentStart, removed on SubagentStop).
+    struct AgentInfo {
+        var id: String          // agent_id (the filename)
+        var agentType: String   // "Explore", "general-purpose", custom names; "" if absent
+        var task: String        // one-line delegation prompt snippet (hook truncates to 200 chars)
+        var parentAgentId: String // "" unless nested; stored for future tree display, rendered flat
+        var startedAt: Double, ts: Double
+
+        init(json o: [String: Any], id: String) {
+            self.id = id
+            self.agentType = o["agentType"] as? String ?? ""
+            self.task = o["task"] as? String ?? ""
+            self.parentAgentId = o["parentAgentId"] as? String ?? ""
+            self.startedAt = (o["startedAt"] as? NSNumber)?.doubleValue ?? 0
+            self.ts = (o["ts"] as? NSNumber)?.doubleValue ?? 0
+        }
+    }
     var sessions: [String: Session] = [:]  // id -> latest parsed per-session state
     var fileMTimes: [String: Date] = [:]   // "<id>.json" -> last-parsed mtime (re-parse only on change)
+    // Kept OFF Session on purpose: reloadSessions() skips a session whose own file is unchanged,
+    // which is exactly the quiet stretch while a Task runs — agents stored on Session would go
+    // stale right when they matter. Parallel dicts keyed by session id sidestep that.
+    var sessionAgents: [String: [AgentInfo]] = [:]  // session id -> running agents, spawn order
+    var agentDirMTimes: [String: Date] = [:]        // session id -> agents.d mtime last parsed
     var gitHeadCache: [String: String] = [:]  // cwd -> resolved HEAD path ("" = confirmed non-git)
     var prevState: [String: String] = [:]  // id -> previous raw state per session
     var menuIsOpen = false                  // refresh the dropdown's per-session timers only while open
     var sessionMenuItems: [(item: NSMenuItem, id: String)] = []
+    var agentMenuItems: [(item: NSMenuItem, sessionId: String, agentId: String)] = []
+    var agentOverflowItems: [(item: NSMenuItem, sessionId: String)] = []
     var activeBase = ""        // label without the elapsed clock
     var startedAt: Double = 0  // unix seconds the current turn began (0 = no clock)
     var activeColor: NSColor? = nil
@@ -491,6 +599,8 @@ final class StatusController: NSObject, NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         menuIsOpen = false
         sessionMenuItems.removeAll()
+        agentMenuItems.removeAll()
+        agentOverflowItems.removeAll()
     }
 
     // The session SET only changes on reopen (NSMenu can't add/remove rows reliably mid-track).
@@ -500,6 +610,24 @@ final class StatusController: NSObject, NSMenuDelegate {
             guard let s = sessions[id], let v = item.view as? SessionRowView else { continue }
             let eff = s.eff.isEmpty ? effectiveState(s, now: now) : s.eff
             configureSessionRow(v, s, eff: eff)
+        }
+        // Agent rows: live rows tick their timers; a row whose agent finished (or whose whole turn
+        // ended) greys out in place — the set can't shrink mid-track, the next open drops it.
+        for (item, sid, aid) in agentMenuItems {
+            guard let v = item.view as? AgentRowView else { continue }
+            if let s = sessions[sid], let a = visibleAgents(for: s).first(where: { $0.id == aid }) {
+                configureAgentRow(v, a, now: now)
+            } else {
+                v.markFinished(dot: agentDot(done: true))
+            }
+        }
+        for (item, sid) in agentOverflowItems {
+            // The overflow line stays put; only its count can change (agents that finish while the
+            // menu is open shrink it, floored at the rows we can't remove).
+            guard let v = item.view?.subviews.first as? NSTextField else { continue }
+            let live = sessions[sid].map { visibleAgents(for: $0).count } ?? 0
+            let hidden = max(0, live - agentMenuItems.filter { $0.sessionId == sid }.count)
+            v.stringValue = hidden > 0 ? "+ \(hidden) more" : ""
         }
     }
 
@@ -515,6 +643,8 @@ final class StatusController: NSObject, NSMenuDelegate {
         }
 
         sessionMenuItems.removeAll()
+        agentMenuItems.removeAll()
+        agentOverflowItems.removeAll()
         let now = Date().timeIntervalSince1970
         // Gate ONLY the desktop app: opening/clicking a conversation there seeds an idle session without
         // real activity (the click-through clutter), so a desktop session stays out of the dropdown until
@@ -534,6 +664,9 @@ final class StatusController: NSObject, NSMenuDelegate {
         var visible = ordered.filter { s in
             let eff = s.eff.isEmpty ? effectiveState(s, now: now) : s.eff
             let resting = !(eff == "permission" || eff == "thinking" || eff == "tool")
+            // Background subagents keep working after the parent's turn ends, without bumping the
+            // session's ts — a session with live agents is active, not stale, so don't hide it.
+            if resting && !visibleAgents(for: s).isEmpty { return true }
             return !(stalePruneAge > 0 && resting && now - s.ts > stalePruneAge)
         }
         if visible.isEmpty, let lead = ordered.first { visible = [lead] }   // floor: never empty while alive
@@ -550,6 +683,30 @@ final class StatusController: NSObject, NSMenuDelegate {
                 it.view = view
                 menu.addItem(it)
                 sessionMenuItems.append((it, s.id))  // kept so tick() can live-update the timers
+
+                // Running subagents, indented under their session. Capped so a big fan-out can't
+                // swallow the menu; agents that START while the menu is open appear on next open
+                // (rows can't be added mid-track), which mirrors how session rows behave.
+                let agents = visibleAgents(for: s)
+                let cfg = uiConfig()
+                let cap = max(1, Int(cfg["agentRowsMax"] ?? 4))
+                for a in agents.prefix(cap) {
+                    let av = AgentRowView(sessionId: s.id, agentId: a.id,
+                                          width: CGFloat(cfg["boxWidth"] ?? 300),
+                                          rowH: CGFloat(cfg["agentRowH"] ?? 20),
+                                          indent: CGFloat(cfg["agentIndent"] ?? 18))
+                    configureAgentRow(av, a, now: now)
+                    let ai = NSMenuItem()
+                    ai.view = av
+                    menu.addItem(ai)
+                    agentMenuItems.append((ai, s.id, a.id))
+                }
+                if agents.count > cap {
+                    let oi = NSMenuItem()
+                    oi.view = agentOverflowView(count: agents.count - cap, cfg: cfg)
+                    menu.addItem(oi)
+                    agentOverflowItems.append((oi, s.id))
+                }
             }
             menu.addItem(.separator())
         } else if claudeDesktopRunning() {
@@ -701,6 +858,51 @@ final class StatusController: NSObject, NSMenuDelegate {
         if !s.branch.isEmpty { tip += " · " + s.branch }
         if !s.cwd.isEmpty { tip += "\n" + s.cwd }
         v.toolTip = tip
+    }
+
+    func configureAgentRow(_ v: AgentRowView, _ a: AgentInfo, now: Double) {
+        let cfg = uiConfig()
+        v.configure(dot: agentDot(done: false),
+                    agentType: a.agentType.isEmpty ? "agent" : a.agentType,
+                    task: truncated(a.task, max: 60, keep: 58),
+                    timer: elapsed(max(0, Int(now - a.startedAt))),
+                    rightInset: CGFloat(cfg["pillInset"] ?? 12),
+                    timerGap: CGFloat(cfg["timerGap"] ?? 10))
+        v.toolTip = a.task.isEmpty ? a.agentType : a.task   // the full (untruncated) delegation prompt
+    }
+
+    // Claude Code-style task dot: dim grey while an agent runs, green once it's done.
+    func agentDot(done: Bool) -> NSImage? {
+        guard let img = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: nil) else { return nil }
+        let tint: NSColor = done ? .systemGreen : .tertiaryLabelColor
+        let size = CGFloat(uiConfig()["agentDotSize"] ?? 7)
+        return img.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(pointSize: size, weight: .regular)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [tint])))
+    }
+
+    // Dim "+ k more" line when a fan-out exceeds agentRowsMax; indented like the agent rows.
+    func agentOverflowView(count: Int, cfg: [String: Double]) -> NSView {
+        let tf = NSTextField(labelWithString: "+ \(count) more")
+        tf.font = NSFont.menuFont(ofSize: NSFont.menuFont(ofSize: 0).pointSize - 2)
+        tf.textColor = .tertiaryLabelColor
+        let indent = CGFloat(cfg["agentIndent"] ?? 18)
+        tf.frame = NSRect(x: 14 + indent + 16 + 6, y: 1, width: 160, height: 16)
+        let wrap = NSView(frame: NSRect(x: 0, y: 0, width: CGFloat(cfg["boxWidth"] ?? 300), height: 18))
+        wrap.autoresizingMask = [.width]
+        wrap.addSubview(tf)
+        return wrap
+    }
+
+    // Subagents run in the BACKGROUND: they outlive the parent's turn (Stop fires seconds after
+    // the spawn), so a row lives exactly as long as its file — SubagentStart to SubagentStop —
+    // regardless of what the parent is doing. The session's own liveness (pid reap) bounds them,
+    // plus an age cap as the belt for a crash that never fires SubagentStop: session restarts
+    // clear the dir, but a long-lived idle session shouldn't show a dead agent forever.
+    func visibleAgents(for s: Session) -> [AgentInfo] {
+        let cap = uiConfig()["agentMaxAge"] ?? 7200   // same order as the permission cap
+        let now = Date().timeIntervalSince1970
+        return (sessionAgents[s.id] ?? []).filter { now - $0.startedAt < cap }
     }
 
     func statusText(_ s: Session, eff: String) -> String {
@@ -883,6 +1085,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     func tick() {
         checkLifecycle()
         reloadSessions()
+        reloadAgents()
         evaluate()
         if menuIsOpen { refreshOpenMenuRows() }
     }
@@ -917,6 +1120,47 @@ final class StatusController: NSObject, NSMenuDelegate {
             if gitHeadCache[s.cwd] == "" { gitHeadCache[s.cwd] = nil }
             s.branch = branchForCwd(s.cwd)   // only on file change (a hook event), never on a bare tick
             sessions[id] = s
+        }
+    }
+
+    func agentsDirPath(_ id: String) -> String {
+        (stateDir as NSString).appendingPathComponent(id + ".agents.d")
+    }
+
+    // Refresh `sessionAgents` from each live session's <sid>.agents.d/. Agent files are
+    // write-once/delete-once, so the DIRECTORY mtime (bumped by every add, delete, and the
+    // atomic rename) is a complete change signal: one stat per session per tick, a readdir+parse
+    // only when something actually changed — same philosophy as fileMTimes above.
+    func reloadAgents() {
+        let fm = FileManager.default
+        for id in Array(sessionAgents.keys) where sessions[id] == nil {
+            sessionAgents[id] = nil; agentDirMTimes[id] = nil
+        }
+        // Sweep orphaned agent dirs (session gone, dir shell left — e.g. a SubagentStop that
+        // raced a turn-boundary reap). Never rendered (no live session), just disk hygiene.
+        for f in ((try? fm.contentsOfDirectory(atPath: stateDir)) ?? []) where f.hasSuffix(".agents.d") {
+            let sid = String(f.dropLast(".agents.d".count))
+            if sessions[sid] == nil {
+                try? fm.removeItem(atPath: (stateDir as NSString).appendingPathComponent(f))
+            }
+        }
+        for id in sessions.keys {
+            let dir = agentsDirPath(id)
+            guard let attrs = try? fm.attributesOfItem(atPath: dir),
+                  let m = attrs[.modificationDate] as? Date else {
+                sessionAgents[id] = nil; agentDirMTimes[id] = nil   // no dir = no running agents
+                continue
+            }
+            if agentDirMTimes[id] == m { continue }
+            agentDirMTimes[id] = m
+            var list: [AgentInfo] = []
+            for f in ((try? fm.contentsOfDirectory(atPath: dir)) ?? []) where f.hasSuffix(".json") {
+                guard let d = fm.contents(atPath: (dir as NSString).appendingPathComponent(f)),
+                      let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { continue }
+                list.append(AgentInfo(json: o, id: (f as NSString).deletingPathExtension))
+            }
+            // Spawn order, id as a stable tiebreak within the same second.
+            sessionAgents[id] = list.sorted { $0.startedAt == $1.startedAt ? $0.id < $1.id : $0.startedAt < $1.startedAt }
         }
     }
 
@@ -985,7 +1229,9 @@ final class StatusController: NSObject, NSMenuDelegate {
                                  : (s.eff == "idle" && stalePruneAge > 0 && now - s.ts > stalePruneAge)
             if dead {
                 try? FileManager.default.removeItem(atPath: (stateDir as NSString).appendingPathComponent(id + ".json"))
+                try? FileManager.default.removeItem(atPath: agentsDirPath(id))
                 sessions[id] = nil; fileMTimes[id + ".json"] = nil; prevState[id] = nil; sessionWord[id] = nil
+                sessionAgents[id] = nil; agentDirMTimes[id] = nil
                 continue
             }
             sessions[id] = s
