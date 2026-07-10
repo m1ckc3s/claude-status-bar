@@ -3,6 +3,11 @@
 All notable changes to Claude Status Bar are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Running subagents show under their session.** When Claude fans work out to subagents (the Task/Agent tool), each running one gets a small indented row under its session: a Claude Code-style status dot (grey while running, green when finished), the agent type ("Explore", "general-purpose", …), a snippet of the delegation prompt when Claude Code provides one, and its own elapsed timer. Subagents run in the background and often outlive the turn that spawned them — their rows stay for as long as they're actually working, and a session with live agents never counts as idle. A row whose agent finishes while the menu is open settles to a green dot, its timer hidden (menus can't drop rows mid-track); big fan-outs cap at 4 rows plus a "+ k more" line. Driven by Claude Code's SubagentStart/SubagentStop hooks — one tiny file per running agent, cleared at session boundaries and by the app's liveness reaping so crashes can't leave stale rows.
+
 ## [0.3.4] - 2026-07-09
 
 ### Added
