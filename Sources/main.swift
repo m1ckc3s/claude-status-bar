@@ -573,12 +573,10 @@ final class StatusController: NSObject, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
-        if let five = usage.fiveHourDetail {
+        let usageLines = usage.detailLines
+        if !usageLines.isEmpty {
             menu.addItem(header("Usage"))
-            menu.addItem(infoRow(five))
-            if let seven = usage.sevenDayDetail {
-                menu.addItem(infoRow(seven))
-            }
+            for line in usageLines { menu.addItem(infoRow(line)) }
             menu.addItem(.separator())
         }
 
