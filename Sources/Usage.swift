@@ -14,9 +14,12 @@ struct UsageLimit {
 // semantic `group`/`kind` (Session / Weekly), rather than hardcoding plan-specific durations
 // like "5h"/"7d", so it stays correct across Pro and Max (incl. Max's model-scoped weekly caps).
 //
-// The access token is read fresh from ~/.claude/.credentials.json on every call, so when Claude
-// Code rotates it we pick it up automatically. Read-only: the token never leaves this machine
-// except as the Bearer auth on the request to Anthropic's own API.
+// The access token is read fresh on every call — from the macOS Keychain first, falling back to
+// ~/.claude/.credentials.json — so token rotations AND account switches are picked up
+// automatically. (Newer Claude Code treats the Keychain item as authoritative and leaves the
+// file as a stale cache that only re-syncs on a CLI session start; reading the Keychain keeps us
+// on the active account.) Read-only: the token never leaves this machine except as the Bearer
+// auth on the request to Anthropic's own API.
 final class UsageFetcher {
     private(set) var limits: [UsageLimit] = []
     var onUpdate: (() -> Void)?   // called on the main thread after a successful fetch
@@ -34,13 +37,47 @@ final class UsageFetcher {
     }()
     private func parseDate(_ s: String) -> Date? { Self.isoFrac.date(from: s) ?? Self.isoPlain.date(from: s) }
 
-    private func accessToken() -> String? {
-        guard let data = FileManager.default.contents(atPath: credsPath),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let oauth = obj["claudeAiOauth"] as? [String: Any],
-              let token = oauth["accessToken"] as? String, !token.isEmpty else { return nil }
-        return token
+    private let keychainService = "Claude Code-credentials"
+
+    // Both sources store the same JSON shape ({ "claudeAiOauth": { "accessToken": … } }); some
+    // hold the bare token instead, so accept either.
+    private func tokenFromBlob(_ data: Data) -> String? {
+        if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let oauth = obj["claudeAiOauth"] as? [String: Any],
+           let token = oauth["accessToken"] as? String, !token.isEmpty {
+            return token
+        }
+        if let raw = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           raw.hasPrefix("sk-ant-") {
+            return raw
+        }
+        return nil
     }
+
+    // Read the token via /usr/bin/security rather than SecItemCopyMatching directly: the CLI is
+    // Apple-signed and already trusted in the item's ACL, so it reads without the keychain-access
+    // prompt that an unsigned/ad-hoc app triggers. This is also what follows account switches (the
+    // active account's token lives in the Keychain; the file is only a stale cache).
+    private func keychainToken() -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        p.arguments = ["find-generic-password", "-s", keychainService, "-w"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else { return nil }
+        return tokenFromBlob(data)
+    }
+
+    private func fileToken() -> String? {
+        guard let data = FileManager.default.contents(atPath: credsPath) else { return nil }
+        return tokenFromBlob(data)
+    }
+
+    private func accessToken() -> String? { keychainToken() ?? fileToken() }
 
     private func parseLimits(_ arr: [[String: Any]]) -> [UsageLimit] {
         arr.compactMap { l in
