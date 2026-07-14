@@ -310,6 +310,9 @@ final class StatusController: NSObject, NSMenuDelegate {
     enum AnimStyle: String { case web, code, crab }
     var animStyle: AnimStyle = .web
     var showTimer = false
+    var showUsage = true            // show subscription usage (5h / 7d %) in the bar
+    let usage = UsageFetcher()
+    var usageTimer: Timer?
     var iconSystem = false // false = brand Orange; true = adaptive black/white (template image)
     var useThinkingWords = true     // rotate a playful verb ("Manifesting…") in place of "Thinking…"
     var sessionWord: [String: String] = [:] // id -> current thinking word; re-picked on each entry into "thinking"
@@ -371,6 +374,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         super.init()
         let d = UserDefaults.standard
         if d.object(forKey: "showTimer") != nil { showTimer = d.bool(forKey: "showTimer") }
+        if d.object(forKey: "showUsage") != nil { showUsage = d.bool(forKey: "showUsage") }
         if d.object(forKey: "iconSystem") != nil { iconSystem = d.bool(forKey: "iconSystem") }
         if d.object(forKey: "thinkingWords") != nil { useThinkingWords = d.bool(forKey: "thinkingWords") }
         if let s = d.string(forKey: "animStyle"), let st = AnimStyle(rawValue: s) { animStyle = st }
@@ -384,6 +388,13 @@ final class StatusController: NSObject, NSMenuDelegate {
         tick()
         ensureHooksInstalled()
         checkForUpdate()
+        // Subscription usage (5h / 7d) shown in the bar; poll every 2 min. First fetch is
+        // async, so the numbers appear a moment after launch.
+        usage.onUpdate = { [weak self] in self?.applyTitle() }
+        usage.refresh()
+        let ut = Timer(timeInterval: 120, repeats: true) { [weak self] _ in self?.usage.refresh() }
+        RunLoop.main.add(ut, forMode: .common)
+        usageTimer = ut
     }
 
     // Re-runs on first install AND on every version change, so upgrades pick up hook
@@ -506,6 +517,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         checkForUpdate() // refreshes the update cache for next open (gated to once a day)
+        usage.refresh()  // keep the usage rows current while the menu is open (async; lands next open)
 
         // Branches otherwise refresh only on hook events, so re-read on open (one tiny file read per
         // session) to catch a checkout made while a session sat idle.
@@ -561,10 +573,25 @@ final class StatusController: NSObject, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
+        if let five = usage.fiveHourDetail {
+            menu.addItem(header("Usage"))
+            menu.addItem(infoRow(five))
+            if let seven = usage.sevenDayDetail {
+                menu.addItem(infoRow(seven))
+            }
+            menu.addItem(.separator())
+        }
+
         menu.addItem(header("Options"))
         menu.addItem(toggleRow(title: "Show timer", isOn: showTimer) { [weak self] on in
             self?.showTimer = on
             UserDefaults.standard.set(on, forKey: "showTimer")
+            self?.applyTitle()
+        })
+        menu.addItem(toggleRow(title: "Show usage", isOn: showUsage) { [weak self] on in
+            self?.showUsage = on
+            UserDefaults.standard.set(on, forKey: "showUsage")
+            self?.usage.refresh()
             self?.applyTitle()
         })
         menu.addItem(toggleRow(title: "Thinking words", isOn: useThinkingWords) { [weak self] on in
@@ -650,6 +677,24 @@ final class StatusController: NSObject, NSMenuDelegate {
             row.addSubview(q)
         }
 
+        let item = NSMenuItem()
+        item.view = row
+        return item
+    }
+
+    // A non-interactive info line rendered as a custom view so it shows in normal label color
+    // instead of the greyed-out look AppKit gives action-less NSMenuItems.
+    func infoRow(_ text: String) -> NSMenuItem {
+        let width = CGFloat(uiConfig()["boxWidth"] ?? 300), height: CGFloat = 22, leftInset: CGFloat = 14
+        let row = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        row.autoresizingMask = [.width]
+        let label = NSTextField(labelWithString: text)
+        label.font = NSFont.menuFont(ofSize: 0)
+        label.textColor = .labelColor
+        label.sizeToFit()
+        label.setFrameOrigin(NSPoint(x: leftInset, y: (height - label.frame.height) / 2))
+        label.autoresizingMask = [.maxXMargin]
+        row.addSubview(label)
         let item = NSMenuItem()
         item.view = row
         return item
@@ -1141,6 +1186,9 @@ final class StatusController: NSObject, NSMenuDelegate {
         var text = activeBase
         if showTimer, startedAt > 0 {
             text += "  " + elapsed(max(0, Int(Date().timeIntervalSince1970 - startedAt)))
+        }
+        if showUsage, let u = usage.barText {
+            text += (text.isEmpty ? "" : "  ") + u
         }
         if text.isEmpty {
             button.imagePosition = .imageOnly
