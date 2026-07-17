@@ -83,3 +83,12 @@ body:
       placeholder: e.g. Terminal.app, iTerm2, Ghostty, Warp
     validations:
       required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Anything else worth adding? Optional.
+      placeholder: Any other context, or let me know if you're happy to open a PR.
+    validations:
+      required: false
