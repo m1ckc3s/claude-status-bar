@@ -72,7 +72,7 @@ Everything is controlled from the menu:
 
 The app is stateless. Claude Code fires hooks as it works; the app polls those updates and aggregates them across every live session into a single icon, a permission dot if one needs you, animating if any session is working, resting when all are idle. It launches itself when Claude Code opens and quits when nothing's running, so there's nothing to manage.
 
-The installer merges its hooks into `~/.claude/settings.json` (backing it up first), and the app's only network call is a once-a-day GitHub release check ([details](PRIVACY.md)).
+The installer merges its hooks into `~/.claude/settings.json` (backing it up first), and the app's only network activity is a once-a-day update check against GitHub's and Homebrew's public APIs ([details](PRIVACY.md)).
 
 ## Requirements
 
@@ -82,7 +82,7 @@ The installer merges its hooks into `~/.claude/settings.json` (backing it up fir
 
 ## Troubleshooting
 
-Icon quitting right after you open it, not showing, or not moving in Cursor? See [Troubleshooting](TROUBLESHOOTING.md), most of it is expected behavior, not a bug.
+Icon not appearing, vanishing on its own, or not animating when it should? See [Troubleshooting](TROUBLESHOOTING.md), most of it is expected behavior, not a bug.
 
 ## Uninstall
 
