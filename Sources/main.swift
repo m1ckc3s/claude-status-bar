@@ -133,7 +133,8 @@ final class SessionRowView: NSView {
         spinner.controlSize = .small
         spinner.isIndeterminate = true
         spinner.isDisplayedWhenStopped = false
-        spinner.frame = iconView.frame
+        let spinSize = iconSize * 0.9
+        spinner.frame = NSRect(x: pad + (iconSize - spinSize) / 2, y: (rowH - spinSize) / 2, width: spinSize, height: spinSize)
         spinner.autoresizingMask = [.maxXMargin]
         spinner.isHidden = true
         addSubview(spinner)
@@ -143,7 +144,7 @@ final class SessionRowView: NSView {
         nameField.frame = NSRect(x: pad + iconSize + 8, y: (rowH - 16) / 2, width: 160, height: 16)
         nameField.autoresizingMask = [.maxXMargin]
         addSubview(nameField)
-        timerField.font = NSFont.monospacedSystemFont(ofSize: NSFont.menuFont(ofSize: 0).pointSize - 2, weight: .regular)
+        timerField.font = NSFont.monospacedSystemFont(ofSize: NSFont.menuFont(ofSize: 0).pointSize, weight: .regular)
         timerField.textColor = .secondaryLabelColor
         timerField.alignment = .right
         timerField.autoresizingMask = [.minXMargin]
@@ -186,15 +187,11 @@ final class SessionRowView: NSView {
             timerField.stringValue = timer
             // Fit the column to the text (mono font, right edge anchored at the pill): a fixed-width
             // column reserved ~50pt of blank space that pixel-truncated the name · branch next to it.
-            let font = timerField.font ?? NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+            let font = timerField.font ?? NSFont.monospacedSystemFont(ofSize: NSFont.menuFont(ofSize: 0).pointSize, weight: .regular)
             let tw = ceil(timer.size(withAttributes: [.font: font]).width) + 2
-            // The timer font is 2pt smaller than the name font; equal-height boxes at the same y center
-            // the text, which leaves the smaller font's baseline higher and the digits visibly floating
-            // next to the name. Offset the frame so the two baselines coincide.
-            let nf = nameField.font ?? NSFont.menuFont(ofSize: 0)
-            let baseline = { (f: NSFont) in (16 - (f.ascender - f.descender)) / 2 - f.descender }
-            let dy = baseline(nf) - baseline(font)
-            timerField.frame = NSRect(x: pillLeft - timerGap - tw, y: (rowH - 16) / 2 + dy, width: tw, height: 16)
+            // Same point size and same box (y/height) as the name field, so the timer sits on the name's
+            // baseline instead of floating at the row's vertical center.
+            timerField.frame = NSRect(x: pillLeft - timerGap - tw, y: (rowH - 16) / 2, width: tw, height: 16)
         } else { timerField.isHidden = true }
         // Name stretches to whatever the timer/pill leave free (branch text made the fixed 160 tight);
         // pixel truncation via the paragraph style handles overflow.
@@ -244,6 +241,75 @@ final class SessionRowView: NSView {
         highlightView.frame = bounds.insetBy(dx: 5, dy: 0)
     }
     override func mouseDown(with event: NSEvent) { onClick?() }
+}
+
+// Custom view for the same reason as SessionRowView (a trailing-edge icon needs a flexible
+// spacer; a plain menu item can't cross the shortcut/submenu-arrow gutter), with the same
+// self-drawn hover highlight.
+final class CopyRowView: NSView {
+    private let label = NSTextField(labelWithString: "")
+    private let icon = NSImageView()
+    private let highlightView = NSVisualEffectView()
+    private let command: String
+    private let pad: CGFloat = 14, rowH: CGFloat = 24, iconSize: CGFloat = 15
+    private var copied = false
+
+    init(title: String, command: String, width: CGFloat) {
+        self.command = command
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: rowH))
+        autoresizingMask = [.width]
+        highlightView.material = .selection
+        highlightView.state = .active
+        highlightView.isEmphasized = true
+        highlightView.wantsLayer = true
+        highlightView.layer?.cornerRadius = 5
+        highlightView.isHidden = true
+        addSubview(highlightView)
+        label.font = .menuFont(ofSize: 0)
+        label.textColor = .labelColor
+        label.stringValue = title
+        label.sizeToFit()
+        label.setFrameOrigin(NSPoint(x: pad, y: (rowH - label.frame.height) / 2))
+        label.autoresizingMask = [.maxXMargin]
+        addSubview(label)
+        icon.image = NSImage(systemSymbolName: "square.on.square", accessibilityDescription: "Copy")
+        icon.contentTintColor = .secondaryLabelColor
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.frame = NSRect(x: width - pad - iconSize, y: (rowH - iconSize) / 2, width: iconSize, height: iconSize)
+        icon.autoresizingMask = [.minXMargin]
+        addSubview(icon)
+        toolTip = command
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with event: NSEvent) { setHover(true) }
+    override func mouseExited(with event: NSEvent) { setHover(false) }
+    private func setHover(_ h: Bool) {
+        highlightView.isHidden = !h
+        label.textColor = h ? .white : .labelColor
+        icon.contentTintColor = h ? .white : (copied ? .labelColor : .secondaryLabelColor)
+    }
+    override func layout() {
+        super.layout()
+        highlightView.frame = bounds.insetBy(dx: 5, dy: 0)
+    }
+    override func mouseDown(with event: NSEvent) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(command, forType: .string)
+        copied = true
+        icon.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Copied")
+        icon.contentTintColor = .white  // click happens mid-hover; setHover keeps it labelColor otherwise
+        // Give the checkmark a beat to register before the menu closes.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.enclosingMenuItem?.menu?.cancelTracking()
+        }
+    }
 }
 
 final class StatusController: NSObject, NSMenuDelegate {
@@ -313,6 +379,14 @@ final class StatusController: NSObject, NSMenuDelegate {
     var iconSystem = false // false = brand Orange; true = adaptive black/white (template image)
     var useThinkingWords = true     // rotate a playful verb ("Manifesting…") in place of "Thinking…"
     var sessionWord: [String: String] = [:] // id -> current thinking word; re-picked on each entry into "thinking"
+    var soundThreshold: Double = 0  // 0 = off; else the min turn length (seconds) that chimes on completion
+    var turnStart: [String: Double] = [:]  // id -> active turn start, for the completion-sound length gate
+    lazy var completionSound: NSSound? = {
+        guard let p = Bundle.main.path(forResource: "completion", ofType: "mp3"),
+              let s = NSSound(contentsOfFile: p, byReference: true) else { return nil }
+        s.volume = 0.7 // the clip is loud at full system volume; play it a bit softer
+        return s
+    }()
     // Claude Code's SPINNER_VERBS, minus the hyphenated/tongue-twister ones. Longest kept is ~14 chars
     // ("Hullaballooing"/"Metamorphosing"); with the timer showing they can get wide in a crowded menu bar.
     let thinkingWords = [
@@ -373,6 +447,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         if d.object(forKey: "showTimer") != nil { showTimer = d.bool(forKey: "showTimer") }
         if d.object(forKey: "iconSystem") != nil { iconSystem = d.bool(forKey: "iconSystem") }
         if d.object(forKey: "thinkingWords") != nil { useThinkingWords = d.bool(forKey: "thinkingWords") }
+        if d.object(forKey: "soundThreshold") != nil { soundThreshold = d.double(forKey: "soundThreshold") }
         if let s = d.string(forKey: "animStyle"), let st = AnimStyle(rawValue: s) { animStyle = st }
         let menu = NSMenu()
         menu.delegate = self
@@ -382,8 +457,25 @@ final class StatusController: NSObject, NSMenuDelegate {
         RunLoop.main.add(t, forMode: .common)
         pollTimer = t
         tick()
+        removeOldNamedBundle()
         ensureHooksInstalled()
         checkForUpdate()
+    }
+
+    // 0.4.0 rename transition ("ClaudeStatusBar.app" to "Claude Status Bar.app"): Finder won't
+    // replace across different filenames, so a manual DMG update leaves the old-named copy behind;
+    // remove it on launch. Guarded by bundle id so a fork or unrelated app at that path is never
+    // touched, and skipped when running FROM that path (old-named dev builds).
+    func removeOldNamedBundle() {
+        let old = "/Applications/ClaudeStatusBar.app"
+        guard Bundle.main.bundlePath != old,
+              let info = NSDictionary(contentsOfFile: old + "/Contents/Info.plist"),
+              info["CFBundleIdentifier"] as? String == "com.local.claudestatusbar" else { return }
+        for app in NSWorkspace.shared.runningApplications
+            where app.bundleURL?.path == old && app.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            app.forceTerminate()
+        }
+        try? FileManager.default.removeItem(atPath: old)
     }
 
     // Re-runs on first install AND on every version change, so upgrades pick up hook
@@ -447,6 +539,18 @@ final class StatusController: NSObject, NSMenuDelegate {
     var currentVersion: String { (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0" }
     let releaseAPIURL = "https://api.github.com/repos/m1ckc3s/claude-status-bar/releases/latest"
     let releasePageURL = "https://github.com/m1ckc3s/claude-status-bar/releases/latest"
+    // Homebrew: the cask lags a GitHub release by up to ~a day (autobump), so brew-managed
+    // installs gate "update available" on the CASK version, so the copy command always works
+    // when offered. Public JSON, nothing sent anywhere (same privacy story as the GitHub check).
+    let brewCaskAPIURL = "https://formulae.brew.sh/api/cask/claude-status-bar.json"
+    let brewUpgradeCommand = "brew upgrade --cask claude-status-bar"
+    // The trailing `open` matters: brew only copies the app, and the first launch of the new copy
+    // is what installs hooks and removes the old-named bundle (0.4.0 rename transition).
+    let brewInstallCommand = "brew install --cask claude-status-bar && open -a \"Claude Status Bar\""
+    var brewManaged: Bool {
+        FileManager.default.fileExists(atPath: "/opt/homebrew/Caskroom/claude-status-bar")
+            || FileManager.default.fileExists(atPath: "/usr/local/Caskroom/claude-status-bar")
+    }
 
     // Once/day: cache GitHub's latest release tag in UserDefaults. Nothing sent to us.
     func checkForUpdate() {
@@ -463,6 +567,13 @@ final class StatusController: NSObject, NSMenuDelegate {
             let ver = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
             UserDefaults.standard.set(ver, forKey: "latestVersion")
             UserDefaults.standard.set(now, forKey: "lastUpdateCheck")
+        }.resume()
+        guard let brewURL = URL(string: brewCaskAPIURL) else { return }
+        URLSession.shared.dataTask(with: URLRequest(url: brewURL)) { data, _, _ in
+            guard let data = data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let ver = obj["version"] as? String else { return }
+            UserDefaults.standard.set(ver, forKey: "brewCaskVersion")
         }.resume()
     }
 
@@ -597,12 +708,40 @@ final class StatusController: NSObject, NSMenuDelegate {
         colorParent.submenu = colorSub
         menu.addItem(colorParent)
 
+        let soundParent = NSMenuItem(title: "Completion Sound", action: nil, keyEquivalent: "")
+        let soundSub = NSMenu()
+        for (secs, name) in [(0.0, "Off"), (60.0, "1 min+"), (300.0, "5 min+"), (900.0, "15 min+")] {
+            let it = NSMenuItem(title: name, action: #selector(chooseSound(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = NSNumber(value: secs)
+            it.state = soundThreshold == secs ? .on : .off
+            soundSub.addItem(it)
+        }
+        soundParent.submenu = soundSub
+        menu.addItem(soundParent)
+
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Version \(currentVersion)", action: nil, keyEquivalent: ""))
         if let latest = UserDefaults.standard.string(forKey: "latestVersion"), versionIsNewer(latest, than: currentVersion) {
-            let up = NSMenuItem(title: "Update available", action: #selector(openLatestRelease), keyEquivalent: "")
-            up.target = self
-            menu.addItem(up)
+            let width = CGFloat(uiConfig()["boxWidth"] ?? 300)
+            let brewVer = UserDefaults.standard.string(forKey: "brewCaskVersion")
+            if brewManaged {
+                // Silent until the cask catches up (autobump lag): never offer a command that
+                // would report "already up to date".
+                if let bv = brewVer, versionIsNewer(bv, than: currentVersion) {
+                    let title = "Update to \(bv) via brew"
+                    let it = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                    it.view = CopyRowView(title: title, command: brewUpgradeCommand, width: width)
+                    menu.addItem(it)
+                }
+            } else {
+                let up = NSMenuItem(title: "Update to \(latest)", action: #selector(openLatestRelease), keyEquivalent: "")
+                up.target = self
+                menu.addItem(up)
+                let sw = NSMenuItem(title: "Switch to Homebrew", action: nil, keyEquivalent: "")
+                sw.view = CopyRowView(title: "Switch to Homebrew", command: brewInstallCommand, width: width)
+                menu.addItem(sw)
+            }
         }
         let q = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         q.target = self
@@ -869,6 +1008,12 @@ final class StatusController: NSObject, NSMenuDelegate {
         evaluate() // re-render the current state in the new color
     }
 
+    @objc func chooseSound(_ sender: NSMenuItem) {
+        guard let n = sender.representedObject as? NSNumber else { return }
+        soundThreshold = n.doubleValue
+        UserDefaults.standard.set(soundThreshold, forKey: "soundThreshold")
+    }
+
     @objc func chooseStyle(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String, let st = AnimStyle(rawValue: raw) else { return }
         animStyle = st
@@ -971,8 +1116,21 @@ final class StatusController: NSObject, NSMenuDelegate {
         return ""
     }
 
+    // Working->done edge for the completion chime, gated on turn length >= soundThreshold (0 = off).
+    // Reads prevState, which the evaluate() loop writes only AFTER this runs, so it must be called
+    // there before that write. Tracks the turn's start while the session is working.
+    func completionEdge(_ s: Session, now: Double) -> Bool {
+        if s.state == "thinking" || s.state == "tool", s.startedAt > 0 { turnStart[s.id] = s.startedAt }
+        let prev = prevState[s.id] ?? ""
+        var edge = false
+        if soundThreshold > 0, s.state == "done", prev != "done", let st = turnStart[s.id], st > 0, now - st >= soundThreshold { edge = true }
+        if s.state == "done" { turnStart[s.id] = 0 }
+        return edge
+    }
+
     func evaluate() {
         let now = Date().timeIntervalSince1970
+        var chime = false
 
         for id in Array(sessions.keys) {
             guard var s = sessions[id] else { continue }
@@ -985,14 +1143,16 @@ final class StatusController: NSObject, NSMenuDelegate {
                                  : (s.eff == "idle" && stalePruneAge > 0 && now - s.ts > stalePruneAge)
             if dead {
                 try? FileManager.default.removeItem(atPath: (stateDir as NSString).appendingPathComponent(id + ".json"))
-                sessions[id] = nil; fileMTimes[id + ".json"] = nil; prevState[id] = nil; sessionWord[id] = nil
+                sessions[id] = nil; fileMTimes[id + ".json"] = nil; prevState[id] = nil; sessionWord[id] = nil; turnStart[id] = nil
                 continue
             }
             sessions[id] = s
             updateThinkingWord(s)
+            if completionEdge(s, now: now) { chime = true }
             prevState[s.id] = s.state
         }
-        for id in Array(prevState.keys) where sessions[id] == nil { prevState[id] = nil; sessionWord[id] = nil }
+        for id in Array(prevState.keys) where sessions[id] == nil { prevState[id] = nil; sessionWord[id] = nil; turnStart[id] = nil }
+        if chime { completionSound?.play() }
 
         // Same-named projects (two clones/worktrees of one repo) get a parent-folder qualifier
         // ("work/myrepo" vs "tmp/myrepo") so their rows stay tellable apart. Runs after the reap so

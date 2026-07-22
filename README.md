@@ -42,6 +42,16 @@ Everything is controlled from the menu:
 
 ## Install
 
+### Homebrew (recommended)
+
+```bash
+brew install --cask claude-status-bar && open -a "Claude Status Bar"
+```
+
+The one launch at the end matters: it wires up the Claude Code hooks automatically. After that it starts itself whenever Claude Code runs.
+
+**Already using the app from the DMG?** The same command switches you to Homebrew. Your settings and hooks carry over, and the old copy cleans itself up on first launch. Full details, edge cases, and the tested upgrade matrix: **[HOMEBREW.md](HOMEBREW.md)**.
+
 ### DMG
 
 Signed and notarized.
@@ -51,14 +61,14 @@ Signed and notarized.
 3. Launch it once. On first launch it wires up the Claude Code hooks for you automatically.
 4. Start a new Claude Code session, the icon appears whenever Claude Code is running.
 
-> **Official `brew install` coming soon.**
-
 ### Updating
 
 > [!IMPORTANT]
 > **Updated mid-session?** Sessions already open won't show up until they do something (send a prompt) or you start a new `claude` session.
 
-Download the latest DMG and drag it into Applications (choose **Replace**). That's it: it refreshes its own hooks the next time it starts up (on a version change it re-runs its installer automatically), so there's nothing to run by hand. Your next Claude Code session picks them up.
+The menu tells you when an update is ready. Installed via brew, it shows **Update via brew** with a copy button (paste the command in your terminal); it appears once Homebrew can actually deliver the new version, which can lag a release by up to a day. Installed via DMG, **Update available** opens the releases page, plus a one-click **Switch to Homebrew** option.
+
+Or just run `brew upgrade --cask claude-status-bar` (brew), or download the latest DMG and drag it into Applications (manual). Hooks refresh themselves on the next launch; nothing to run by hand.
 
 ## Requirements
 
@@ -79,9 +89,11 @@ Icon quitting right after you open it, not showing, or not moving in Cursor? See
 ## Uninstall
 
 ```bash
-node "/Applications/ClaudeStatusBar.app/Contents/Resources/uninstall.js"   # removes only our hooks
+node "/Applications/Claude Status Bar.app/Contents/Resources/uninstall.js"   # removes only our hooks
+brew uninstall --zap claude-status-bar                                       # removes the app + every file it created
 ```
-Then drag the app to the Trash.
+
+Installed manually instead of via brew? Skip the second line and drag the app to the Trash.
 
 ## Acknowledgements
 
