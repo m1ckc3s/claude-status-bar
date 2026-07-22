@@ -27,6 +27,8 @@ body:
           required: true
         - label: This is a single bug report (please file separate reports for different bugs)
           required: true
+        - label: I have Node.js installed (`node -v` prints a version)
+          required: true
 
   - type: textarea
     id: whats-wrong
