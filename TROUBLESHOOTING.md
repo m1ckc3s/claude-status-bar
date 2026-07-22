@@ -2,7 +2,7 @@
 
 **You don't open this app, it opens itself.** The only time you launch it by hand is once, right after install, so it can wire up the Claude Code hooks. After that it starts itself whenever a Claude Code session is running and quits when none is. So opening it from Finder or Spotlight with no session active can look like it launches and immediately quits. That is expected, not a crash: just start a Claude Code session and the icon appears on its own. Upgrades self-heal: drop the new version into Applications and it refreshes its own hooks the next time it starts up. (It relaunches itself when your next session begins, and on a version change it re-runs its installer automatically, so you never run anything by hand.)
 
-**Updated (or just installed) while Claude Code sessions were already running?** Sessions already open won't show up until you start a new `claude` session, so the menu can look empty even with terminals open. (Restarting the terminal works too, since that starts a new session.)
+**Updated (or just installed) while Claude Code sessions were already running?** Sessions already open appear the next time they do something (a prompt or a tool call), so the menu can look empty until then. Starting a new `claude` session also works. (On 0.4.0 and earlier, a new session was the only way; update if you're seeing that.)
 
 **Using Chat or Cowork in the desktop app?** Those don't move the icon. Claude Code Chat and Cowork don't fire the same hooks this app runs on, so there's no live signal to drive the timer or the animation. Only Claude Code sessions move it: the desktop app's Code mode, or `claude` in a terminal. You'll still see the resting spark while the desktop app is open.
 

@@ -457,6 +457,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         RunLoop.main.add(t, forMode: .common)
         pollTimer = t
         tick()
+        try? FileManager.default.removeItem(atPath: (NSHomeDirectory() as NSString).appendingPathComponent(".claude/statusbar/quit-intent"))
         removeOldNamedBundle()
         ensureHooksInstalled()
         checkForUpdate()
@@ -966,7 +967,13 @@ final class StatusController: NSObject, NSMenuDelegate {
         return m > 0 ? "\(m)m \(s)s" : "\(s)s"
     }
 
-    @objc func quit() { NSApp.terminate(nil) }
+    // The marker keeps update.js's self-relaunch from undoing an explicit Quit; cleared on the
+    // next SessionStart (lifecycle.js) or the next manual launch (below), whichever comes first.
+    @objc func quit() {
+        let marker = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/statusbar/quit-intent")
+        FileManager.default.createFile(atPath: marker, contents: nil)
+        NSApp.terminate(nil)
+    }
 
     @objc func openClaude() {
         let ws = NSWorkspace.shared

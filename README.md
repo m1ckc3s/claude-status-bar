@@ -19,7 +19,7 @@ The one launch at the end matters: it wires up the Claude Code hooks automatical
 **Already using the app from the DMG?** The same command switches you to Homebrew. Your settings and hooks carry over, and the old copy cleans itself up on first launch. Full details, edge cases, and the tested upgrade matrix: **[HOMEBREW.md](HOMEBREW.md)**.
 
 > [!IMPORTANT]
-> **Updated (or installed) mid-session?** Sessions already open won't show up until you start a new `claude` session.
+> **Updated (or installed) mid-session?** Sessions already open appear the next time they do something (a prompt or a tool call). Starting a new `claude` session also works.
 
 ### DMG
 

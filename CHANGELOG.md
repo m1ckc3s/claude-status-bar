@@ -3,6 +3,12 @@
 All notable changes to Claude Status Bar are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-07-22
+
+### Fixed
+- **Installing while a Claude Code session is already open no longer looks broken.** The app still quits a few seconds after the first launch (nothing to show yet), but now the hooks relaunch it the moment any session does anything, including sessions that were open before you installed. Previously the icon stayed gone until you started a brand-new session. Thanks to [@Bardin08](https://github.com/Bardin08) for the model bug report and root-cause analysis ([#44](https://github.com/m1ckc3s/claude-status-bar/issues/44)).
+- Quit still means quit: quitting from the menu suppresses the relaunch until your next new Claude Code session (or you open the app yourself).
+
 ## [0.4.0] - 2026-07-22
 
 ### Added

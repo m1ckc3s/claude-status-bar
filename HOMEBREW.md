@@ -10,7 +10,7 @@ brew install --cask claude-status-bar && open -a "Claude Status Bar"
 
 The `open` at the end launches the app once, and that first launch is what installs its Claude Code hooks (brew can't do it for you: installing only copies the app). After it, the app starts itself whenever a Claude Code session begins, and the spark appears in your menu bar whenever Claude Code does something.
 
-If no Claude Code session is running when you install, the app may quit again a few seconds after that first launch. That's normal, not a failed install: the hooks are in place, and it reappears on its own the moment a session starts. (More of these "looks broken, isn't" cases: [TROUBLESHOOTING.md](TROUBLESHOOTING.md).)
+If no Claude Code session is running when you install, the app may quit again a few seconds after that first launch. That's normal, not a failed install: the hooks are in place, and it reappears on its own the moment any session does anything (a prompt, a tool call, or a new session starting). (More of these "looks broken, isn't" cases: [TROUBLESHOOTING.md](TROUBLESHOOTING.md).)
 
 No Homebrew? Download `ClaudeStatusBar.dmg` from [Releases](https://github.com/m1ckc3s/claude-status-bar/releases/latest) and drag it to Applications, same as always.
 

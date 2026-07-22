@@ -37,6 +37,8 @@ function run() {
   const statePath = path.join(stateDir, id + ".json");
 
   if (event === "start") {
+    // A new session voids a prior explicit Quit (see update.js's self-relaunch suppress).
+    try { fs.rmSync(path.join(dir, "quit-intent"), { force: true }); } catch {}
     // If the app isn't running, any leftover session files are stale (e.g. a prior
     // crash) — clear them so the count starts honest.
     if (!running()) { try { for (const f of fs.readdirSync(stateDir)) fs.rmSync(path.join(stateDir, f), { force: true }); } catch {} }

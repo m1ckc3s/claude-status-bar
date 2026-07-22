@@ -5,9 +5,13 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const cp = require("child_process");
 
 const dir = path.join(os.homedir(), ".claude", "statusbar");
 const stateDir = path.join(dir, "state.d");
+// Written by the app's Quit menu item; suppresses the relaunch below so Quit sticks.
+// lifecycle.js removes it on the next SessionStart (a new session = fresh consent).
+const quitMarker = path.join(dir, "quit-intent");
 const event = process.argv[2] || "";
 
 const TOOL_LABELS = {
@@ -99,4 +103,15 @@ process.stdin.on("end", () => {
     fs.writeFileSync(tmp, JSON.stringify(out));
     fs.renameSync(tmp, statePath);
   } catch {}
+
+  // Self-heal: a session with live state but no app to show it relaunches the app. Covers
+  // install-while-a-session-is-already-open (that session never fires SessionStart, the only
+  // other opener) and an app killed/crashed mid-session. Skipped after an explicit menu Quit.
+  try {
+    if (!fs.existsSync(quitMarker)) {
+      cp.execSync("pgrep -x ClaudeStatusBar", { stdio: "ignore" });
+    }
+  } catch {
+    try { cp.spawn("open", ["-g", "-b", "com.local.claudestatusbar"], { stdio: "ignore", detached: true }).unref(); } catch {}
+  }
 });
