@@ -27,8 +27,6 @@ body:
           required: true
         - label: This is a single bug report (please file separate reports for different bugs)
           required: true
-        - label: I am using the latest version of Claude Status Bar
-          required: true
 
   - type: textarea
     id: whats-wrong
@@ -57,6 +55,26 @@ body:
         2. Start a Claude session and write a prompt
         3. The menu bar icon shows
         4. The icon disappears while the terminal is still active
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      description: Shown at the bottom of the menu bar dropdown (e.g. Version 0.4.0)
+      placeholder: e.g. 0.4.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How did you install it?
+      options:
+        - Homebrew (brew install)
+        - DMG (downloaded from Releases)
+        - Not sure
     validations:
       required: true
 
