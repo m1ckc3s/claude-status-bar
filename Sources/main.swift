@@ -458,6 +458,9 @@ final class StatusController: NSObject, NSMenuDelegate {
         pollTimer = t
         tick()
         try? FileManager.default.removeItem(atPath: (NSHomeDirectory() as NSString).appendingPathComponent(".claude/statusbar/quit-intent"))
+        // Superseded old-named copy: hand off and stop here, so it never installs its older hooks
+        // over the newer copy's (see retireIfSuperseded).
+        if retireIfSuperseded() { return }
         removeOldNamedBundle()
         ensureHooksInstalled()
         checkForUpdate()
@@ -477,6 +480,70 @@ final class StatusController: NSObject, NSMenuDelegate {
             app.forceTerminate()
         }
         try? FileManager.default.removeItem(atPath: old)
+    }
+
+    // The other half of the 0.4.0 rename transition: this copy IS the old-named one, and a newer
+    // copy is installed alongside it. Both bundles carry the same id, so the hooks' self-heal
+    // (`open -g -b <id>`) resolves between them arbitrarily, and on a machine that resolves to this
+    // one, removeOldNamedBundle() above can never run — the bundle that needs deleting is the only
+    // one ever executing, so it returns at that first guard, reinstalls its own older hooks over the
+    // newer ones, and keeps offering an update that never takes effect however many times the DMG is
+    // reinstalled. Hand off to the newer copy instead and retire.
+    //
+    // Returns true when a handoff started, so init() stops setting up: the hook install must NOT run
+    // here. It races the newer copy's install, and this copy would be writing the OLDER hooks.
+    func retireIfSuperseded() -> Bool {
+        guard Bundle.main.bundlePath == "/Applications/ClaudeStatusBar.app",
+              let newer = newerInstalledCopy() else { return false }
+        handOffAndRetire(to: newer)
+        return true
+    }
+
+    // The highest-versioned installed copy of this same app that is strictly newer than this one.
+    // Restricted to /Applications on purpose: a still-mounted DMG stays registered with
+    // LaunchServices long after the drag (so /Volumes must never be the target), and a dev build
+    // in someone's project folder shouldn't be either — the same reason the caller skips
+    // old-named dev builds. Strictly newer, so equal versions can't start a launch loop.
+    func newerInstalledCopy() -> URL? {
+        guard let id = Bundle.main.bundleIdentifier else { return nil }
+        let version = { (u: URL) in
+            (Bundle(url: u)?.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0"
+        }
+        return NSWorkspace.shared.urlsForApplications(withBundleIdentifier: id)
+            .filter { $0.deletingLastPathComponent().path == "/Applications" }
+            .filter { $0.path != Bundle.main.bundlePath }
+            .filter { versionIsNewer(version($0), than: currentVersion) }
+            .max { versionIsNewer(version($1), than: version($0)) }
+    }
+
+    // Launch the newer copy, delete our own bundle, then exit. Only ever called from the old-named
+    // path above, so the bundle removed here is always that superseded copy.
+    //
+    // createsNewApplicationInstance is required, not optional: we are ourselves a running instance
+    // of this bundle id, and without it LaunchServices ignores the URL and hands back the instance
+    // already running (us) with no error, so the handoff silently no-ops and quitting leaves no
+    // status bar at all. Only a new-instance request actually starts the other bundle.
+    //
+    // We delete our own bundle rather than leaving it to the newer copy's cleanup above: that path
+    // force-terminates us and removes the bundle right after, but forceTerminate is asynchronous, so
+    // whether the removal lands depends on how fast we exit. Retiring ourselves takes the race out
+    // of it — unlinking a running bundle is fine, the process keeps going until it terminates.
+    //
+    // NSApp.terminate rather than quit(): quit() writes the quit-intent marker that suppresses the
+    // hooks' relaunch, and this is a handoff, not the user asking for no status bar. Acting only on
+    // success leaves us running if the launch failed, so a failure degrades to the old behaviour
+    // (a stale icon) instead of no icon at all.
+    func handOffAndRetire(to url: URL) {
+        let cfg = NSWorkspace.OpenConfiguration()
+        cfg.activates = false
+        cfg.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: url, configuration: cfg) { app, _ in
+            // Act only once the copy we asked for is the one that actually came up — a request
+            // satisfied by some other instance must not take the status bar down with it.
+            guard app?.bundleURL?.standardizedFileURL.path == url.standardizedFileURL.path else { return }
+            try? FileManager.default.removeItem(atPath: Bundle.main.bundlePath)
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
     }
 
     // Re-runs on first install AND on every version change, so upgrades pick up hook
