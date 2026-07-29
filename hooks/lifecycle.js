@@ -17,6 +17,21 @@ fs.mkdirSync(stateDir, { recursive: true });
 const running = () => { try { cp.execSync(`pgrep -x ${EXEC}`, { stdio: "ignore" }); return true; } catch { return false; } };
 const safeId = (s) => String(s || "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64) || "unknown";
 
+// Optional per-machine tuning file for the app's dropdown; absent by default, installs never
+// touch it. ignoreSurfaces: ["cursor"] skips sessions whose transcript_path is under ~/.cursor/
+// (Cursor's Claude Code extension). Missing file, missing key, or malformed JSON == track everything.
+const uiConfigPath = path.join(dir, "uiconfig.json");
+const cursorDir = path.join(os.homedir(), ".cursor") + path.sep;
+const isIgnoredCursorSession = (transcriptPath) => {
+  if (typeof transcriptPath !== "string" || !transcriptPath.startsWith(cursorDir)) return false;
+  try {
+    const cfg = JSON.parse(fs.readFileSync(uiConfigPath, "utf8"));
+    return Array.isArray(cfg.ignoreSurfaces) && cfg.ignoreSurfaces.includes("cursor");
+  } catch {
+    return false;
+  }
+};
+
 const writeAtomic = (file, obj) => {
   const tmp = file + "." + process.pid + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(obj));
@@ -31,8 +46,9 @@ setTimeout(run, 1000); // hooks always pipe stdin, but never hang the session
 
 function run() {
   if (done) return; done = true;
-  let id = "", cwd = "";
-  try { const j = JSON.parse(input); id = j.session_id; cwd = j.cwd || ""; } catch {}
+  let id = "", cwd = "", transcript = "";
+  try { const j = JSON.parse(input); id = j.session_id; cwd = j.cwd || ""; transcript = j.transcript_path || ""; } catch {}
+  if (isIgnoredCursorSession(transcript)) { process.exit(0); }
   id = safeId(id);
   const statePath = path.join(stateDir, id + ".json");
 

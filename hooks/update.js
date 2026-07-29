@@ -23,11 +23,28 @@ const TOOL_LABELS = {
 
 const safeId = (s) => String(s || "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 64) || "unknown";
 
+// Optional per-machine tuning file for the app's dropdown; absent by default, installs never
+// touch it. ignoreSurfaces: ["cursor"] skips sessions whose transcript_path is under ~/.cursor/
+// (Cursor's Claude Code extension). Missing file, missing key, or malformed JSON == track everything.
+const uiConfigPath = path.join(dir, "uiconfig.json");
+const cursorDir = path.join(os.homedir(), ".cursor") + path.sep;
+const isIgnoredCursorSession = (transcriptPath) => {
+  if (typeof transcriptPath !== "string" || !transcriptPath.startsWith(cursorDir)) return false;
+  try {
+    const cfg = JSON.parse(fs.readFileSync(uiConfigPath, "utf8"));
+    return Array.isArray(cfg.ignoreSurfaces) && cfg.ignoreSurfaces.includes("cursor");
+  } catch {
+    return false;
+  }
+};
+
 let raw = "";
 process.stdin.on("data", (d) => (raw += d));
 process.stdin.on("end", () => {
   let p = {};
   try { p = JSON.parse(raw || "{}"); } catch {}
+
+  if (isIgnoredCursorSession(p.transcript_path)) return;
 
   // Off by default; CLAUDE_STATUSBAR_DEBUG=1 logs every hook invocation to hooks.log.
   if (process.env.CLAUDE_STATUSBAR_DEBUG === "1") {
