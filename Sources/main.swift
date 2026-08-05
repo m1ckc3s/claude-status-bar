@@ -316,6 +316,9 @@ final class StatusController: NSObject, NSMenuDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let stateDir = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/statusbar/state.d")
     let claudeDesktopBundleID = "com.anthropic.claudefordesktop"
+    // Kept current by NSWorkspace launch/terminate notifications (see observeDesktopAppLifecycle),
+    // not polled — see docs/adr/0001-event-driven-desktop-liveness.md.
+    var claudeDesktopIsRunning = false
 
     var pollTimer: Timer?
     var animTimer: Timer?
@@ -461,6 +464,28 @@ final class StatusController: NSObject, NSMenuDelegate {
         removeOldNamedBundle()
         ensureHooksInstalled()
         checkForUpdate()
+        observeDesktopAppLifecycle()
+    }
+
+    // Seed the real state once (synchronous, but a single call, not a per-tick poll), then keep it
+    // current via NSWorkspace notifications instead of asking LaunchServices on every 0.4s tick.
+    func observeDesktopAppLifecycle() {
+        claudeDesktopIsRunning = NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == claudeDesktopBundleID }
+        let nc = NSWorkspace.shared.notificationCenter
+        nc.addObserver(self, selector: #selector(desktopAppLaunched(_:)), name: NSWorkspace.didLaunchApplicationNotification, object: nil)
+        nc.addObserver(self, selector: #selector(desktopAppTerminated(_:)), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
+    }
+
+    @objc func desktopAppLaunched(_ note: Notification) {
+        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              app.bundleIdentifier == claudeDesktopBundleID else { return }
+        claudeDesktopIsRunning = true
+    }
+
+    @objc func desktopAppTerminated(_ note: Notification) {
+        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              app.bundleIdentifier == claudeDesktopBundleID else { return }
+        claudeDesktopIsRunning = false
     }
 
     // 0.4.0 rename transition ("ClaudeStatusBar.app" to "Claude Status Bar.app"): Finder won't
@@ -1218,9 +1243,7 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     // MARK: self-quit lifecycle
 
-    func claudeDesktopRunning() -> Bool {
-        NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == claudeDesktopBundleID }
-    }
+    func claudeDesktopRunning() -> Bool { claudeDesktopIsRunning }
 
     func sessionCount() -> Int { stateFileNames().count }
 
@@ -1331,18 +1354,37 @@ final class StatusController: NSObject, NSMenuDelegate {
         list.compactMap { Data(base64Encoded: $0).flatMap(NSImage.init(data:)) }
     }
 
-    func iconImage(color: NSColor?, frame: Int) -> NSImage {
-        if animStyle == .web { return tint(frames, color: color, frame: frame) }
-        if animStyle == .crab { return crabIcon(color: color, frame: frame) }
+    // Web and code frames are a small fixed set (8 and 90 respectively) crossed with the only two
+    // colors ever passed in (nil/System, brand/Orange), so every frame animStep() will ever draw is
+    // cached here once instead of rasterized fresh every tick — same idea as crabTemplateFrames below.
+    lazy var webFramesSystem: [NSImage] = (0..<frames.count).map { tint(frames, color: nil, frame: $0) }
+    lazy var webFramesOrange: [NSImage] = (0..<frames.count).map { tint(frames, color: brand, frame: $0) }
+    lazy var codeFramesSystem: [NSImage] = (0..<(codeGlyphs.count * codeSub)).map { let p = codeFrameParams($0); return codeIcon(color: nil, glyph: p.glyph, scale: p.scale) }
+    lazy var codeFramesOrange: [NSImage] = (0..<(codeGlyphs.count * codeSub)).map { let p = codeFrameParams($0); return codeIcon(color: brand, glyph: p.glyph, scale: p.scale) }
+
+    // Which glyph is showing at this frame, and its scale envelope (rise, hold at peak, fall, so
+    // each lands before the swap to the next glyph).
+    func codeFrameParams(_ frame: Int) -> (glyph: Int, scale: CGFloat) {
         let i = (frame / codeSub) % codeGlyphs.count
         let local = (CGFloat(frame % codeSub) + 0.5) / CGFloat(codeSub) // 0…1 within this glyph
-        // Scale envelope per glyph: rise, hold at peak, fall, so each lands before the swap.
         let env: CGFloat
         if local < 0.30 { let u = local / 0.30; env = u * u * (3 - 2 * u) }
         else if local > 0.70 { let u = (1 - local) / 0.30; env = u * u * (3 - 2 * u) }
         else { env = 1 }
-        let scale = codeDip + (codePeaks[i] - codeDip) * env
-        return codeIcon(color: color, glyph: i, scale: scale)
+        return (i, codeDip + (codePeaks[i] - codeDip) * env)
+    }
+
+    func iconImage(color: NSColor?, frame: Int) -> NSImage {
+        switch animStyle {
+        case .web:
+            let set = color == nil ? webFramesSystem : webFramesOrange
+            return set.isEmpty ? NSImage(size: NSSize(width: 18, height: 18)) : set[frame % set.count]
+        case .crab:
+            return crabIcon(color: color, frame: frame)
+        case .code:
+            let set = color == nil ? codeFramesSystem : codeFramesOrange
+            return set.isEmpty ? NSImage(size: NSSize(width: 18, height: 18)) : set[frame % set.count]
+        }
     }
 
     // nil color => adaptive template image (system draws it black/white per the menu bar).
