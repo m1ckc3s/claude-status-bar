@@ -335,6 +335,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         var cwd: String         // session working directory; "" on pre-upgrade files
         var entrypoint: String  // CLAUDE_CODE_ENTRYPOINT: "cli", "claude-desktop", …
         var termProgram: String // TERM_PROGRAM for CLI sessions: "Apple_Terminal", "iTerm.app", …
+        var focusUrl: String    // WARP_FOCUS_URL (warp://session/<uuid>): exact-pane deep link; "" elsewhere
         var pid: Int32          // the session's `claude` process; kill(pid,0) drives liveness. 0 = pre-upgrade file.
         var started: Bool       // true once the session had real activity (a prompt/tool); a merely-opened
                                 // conversation seeds started=false and stays out of the dropdown.
@@ -352,6 +353,7 @@ final class StatusController: NSObject, NSMenuDelegate {
             self.cwd = o["cwd"] as? String ?? ""
             self.entrypoint = o["entrypoint"] as? String ?? ""
             self.termProgram = o["term_program"] as? String ?? ""
+            self.focusUrl = o["focus_url"] as? String ?? ""
             self.pid = Int32(truncatingIfNeeded: (o["pid"] as? NSNumber)?.intValue ?? 0)
             self.started = o["started"] as? Bool ?? false
             self.startedAt = (o["startedAt"] as? NSNumber)?.doubleValue ?? 0
@@ -662,8 +664,8 @@ final class StatusController: NSObject, NSMenuDelegate {
             for s in visible {
                 let eff = s.eff.isEmpty ? effectiveState(s, now: now) : s.eff
                 let view = SessionRowView(id: s.id, width: CGFloat(uiConfig()["boxWidth"] ?? 300))
-                let sid = s.id, ep = s.entrypoint, tp = s.termProgram
-                view.onClick = { [weak self] in menu.cancelTracking(); self?.openSession(sid, entrypoint: ep, termProgram: tp) }
+                let sid = s.id, ep = s.entrypoint, tp = s.termProgram, fu = s.focusUrl
+                view.onClick = { [weak self] in menu.cancelTracking(); self?.openSession(sid, entrypoint: ep, termProgram: tp, focusUrl: fu) }
                 configureSessionRow(view, s, eff: eff)
                 let it = NSMenuItem()
                 it.view = view
@@ -990,14 +992,19 @@ final class StatusController: NSObject, NSMenuDelegate {
     }
 
     // Row click. Desktop session: focus the Claude app. Do NOT use claude://resume?session=<id>,
-    // that calls importCliSession() and spawns a duplicate "ungrouped" session record
-    // (local_<random>.json with cliSessionId=<id>) every click, it's an import verb, not focus.
-    // The clean focus path (claude://code/<bridgeSessionId>) needs an opaque session_/cse_ bridge
-    // id the app never exposes to us (not in env, not derivable from the UUID, undefined on disk).
-    // CLI session: bring its terminal APP to the front (zero permission). Targeting the exact
-    // window/tab needs a one-time Automation grant, deferred to the opt-in build (issue #19).
-    func openSession(_ id: String, entrypoint: String, termProgram: String) {
+    // that calls importCliSession() and imports a stale copy of the transcript instead of
+    // focusing the live conversation (see issue #58 for the current deep-link surface).
+    // CLI session in Warp: open its WARP_FOCUS_URL (warp://session/<uuid>) — focuses the exact
+    // window/tab/pane, zero permissions (warpdotdev/warp#8611). Works under tmux too, where
+    // TERM_PROGRAM says "tmux"; the URL may point at the pane the tmux server started in.
+    // Other CLI sessions: bring the terminal APP to the front (zero permission). Targeting the
+    // exact window/tab there needs a one-time Automation grant, deferred to the opt-in build (#19).
+    func openSession(_ id: String, entrypoint: String, termProgram: String, focusUrl: String) {
         if entrypoint == "claude-desktop" { openClaude(); return }
+        if !focusUrl.isEmpty, focusUrl.hasPrefix("warp://"), let url = URL(string: focusUrl),
+            NSWorkspace.shared.open(url) {
+            return
+        }
         // Map TERM_PROGRAM to a name `open -a` understands; most terminals match verbatim.
         let app: String
         switch termProgram {
