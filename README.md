@@ -52,7 +52,8 @@ Everything is controlled from the menu:
   - **Unicode**, the terminal glyph spinner
   - **Clawd™**, a pixel-art Clawd crab that scuttles while Claude works
   - **Orbit**, three dots that orbit, merge and breathe
-- **Icon color:** **Orange** or **System** (adaptive black/white). All four styles follow this setting: in System mode Clawd™ renders as a shaded monochrome silhouette that matches the menu bar.
+  - **Quiet**, no motion at all: the spark is grey at rest and solid while Claude works
+- **Icon color:** **Orange** or **System** (adaptive black/white). All five styles follow this setting: in System mode Clawd™ renders as a shaded monochrome silhouette that matches the menu bar.
 - **Version and update:** the menu shows your current version and tells you when an update is ready (see [Updating](#updating)).
 
 ### Where it works

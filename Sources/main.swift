@@ -380,7 +380,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     let frames: [NSImage] = StatusController.loadFrames()
     let spriteFPS: Double = 9 // tune: 8 frames per loop -> ~0.9s/cycle
 
-    enum AnimStyle: String { case web, code, crab, mark }
+    enum AnimStyle: String { case web, code, crab, mark, quiet }
     var animStyle: AnimStyle = .web
     var showTimer = false
     var iconSystem = false // false = brand Orange; true = adaptive black/white (template image)
@@ -473,12 +473,15 @@ final class StatusController: NSObject, NSMenuDelegate {
     var markLoopStart: Int { workingMarkStrips.first { $0.name == "en110" }?.frames ?? 0 }
     var markBodyCount: Int { markSequence.count - (workingMarkStrips.first { $0.name == "ex40" }?.frames ?? 0) }
 
+    let quietRestAlpha: CGFloat = 0.4 // the Quiet spark at rest: adaptive grey in either color mode
+
     var fps: Double {
         switch animStyle {
         case .web: return spriteFPS
         case .code: return Double(codeGlyphs.count * codeSub) / codeCycle
         case .crab: return crabFPS
         case .mark: return markFPS
+        case .quiet: return 1 // unused: render() never starts a timer for this style
         }
     }
     var frameCount: Int {
@@ -487,6 +490,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         case .code: return codeGlyphs.count * codeSub
         case .crab: return max(1, crabFrames.count)
         case .mark: return max(1, markBodyCount)
+        case .quiet: return 1
         }
     }
     var loopStart: Int { animStyle == .mark ? markLoopStart : 0 }
@@ -739,7 +743,7 @@ final class StatusController: NSObject, NSMenuDelegate {
 
         let animParent = NSMenuItem(title: "Animation", action: nil, keyEquivalent: "")
         let animSub = NSMenu()
-        for (style, name) in [(AnimStyle.web, "Spark"), (AnimStyle.code, "Unicode"), (AnimStyle.crab, "Clawd™"), (AnimStyle.mark, "Orbit")] {
+        for (style, name) in [(AnimStyle.web, "Spark"), (AnimStyle.code, "Unicode"), (AnimStyle.crab, "Clawd™"), (AnimStyle.mark, "Orbit"), (AnimStyle.quiet, "Quiet")] {
             let it = NSMenuItem(title: name, action: #selector(chooseStyle(_:)), keyEquivalent: "")
             it.target = self
             it.representedObject = style.rawValue
@@ -1370,7 +1374,10 @@ final class StatusController: NSObject, NSMenuDelegate {
         activeColor = color
         self.startedAt = startedAt
 
-        if animate {
+        if animate, animStyle == .quiet {
+            // One still image per state and no timer; evaluate() keeps the elapsed clock ticking.
+            button.image = iconImage(color: color, frame: 0)
+        } else if animate {
             markOutro = false
             if animTimer == nil {
                 let t = Timer(timeInterval: 1.0 / fps, repeats: true) { [weak self] _ in self?.animStep() }
@@ -1481,6 +1488,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         if animStyle == .web { return tint(frames, color: color, frame: frame) }
         if animStyle == .crab { return crabIcon(color: color, frame: frame) }
         if animStyle == .mark { return markIcon(color: color, frame: frame) }
+        if animStyle == .quiet { return tint(logoSet.isEmpty ? frames : logoSet, color: color, frame: 0) }
         let i = (frame / codeSub) % codeGlyphs.count
         let local = (CGFloat(frame % codeSub) + 0.5) / CGFloat(codeSub) // 0…1 within this glyph
         // Scale envelope per glyph: rise, hold at peak, fall, so each lands before the swap.
@@ -1548,6 +1556,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         if animStyle == .mark, let logo = logoSet.first {
             return markLayer(logo, color: color, scale: markSparkScale)
         }
+        if animStyle == .quiet { return tint(logoSet.isEmpty ? frames : logoSet, color: nil, frame: 0, alpha: quietRestAlpha) }
         return tint(logoSet.isEmpty ? frames : logoSet, color: color, frame: 0)
     }
 
@@ -1627,17 +1636,17 @@ final class StatusController: NSObject, NSMenuDelegate {
     }
 
     // Paint `color` through a frame mask's alpha (destinationIn) so frames recolor.
-    func tint(_ set: [NSImage], color: NSColor?, frame: Int) -> NSImage {
+    func tint(_ set: [NSImage], color: NSColor?, frame: Int, alpha: CGFloat = 1) -> NSImage {
         let s: CGFloat = 18
         guard !set.isEmpty else { return NSImage(size: NSSize(width: s, height: s)) }
         let mask = set[frame % set.count]
         let img = NSImage(size: NSSize(width: s, height: s), flipped: false) { rect in
             if let c = color {
-                c.setFill()
+                c.withAlphaComponent(alpha).setFill()
                 rect.fill()
                 mask.draw(in: rect, from: .zero, operation: .destinationIn, fraction: 1.0)
             } else {
-                mask.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+                mask.draw(in: rect, from: .zero, operation: .sourceOver, fraction: alpha)
             }
             return true
         }
