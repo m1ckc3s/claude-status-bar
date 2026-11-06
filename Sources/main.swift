@@ -98,21 +98,24 @@ final class ToggleView: NSView {
 
 // A session row as a custom view so a flexible spacer can pin the timer + pill to the true trailing
 // edge (a plain menu-item title can't cross the menu's reserved shortcut/submenu-arrow column).
-// Layout: [icon] name  <spacer>  timer  [pill], with timer+pill pinned right via autoresizing.
+// Layout: line one is the title, line two is [folder · branch  <spacer>  timer  [pill]], with
+// timer+pill pinned right via autoresizing. A session with no title yet has one centered line.
 final class SessionRowView: NSView {
     let id: String
     var onClick: (() -> Void)?
     private let iconView = NSImageView()
     private let spinner = NSProgressIndicator()
     private let nameField = NSTextField(labelWithString: "")
+    private let detailField = NSTextField(labelWithString: "")
     private let timerField = NSTextField(labelWithString: "")
     private let pillView = NSImageView()
-    private let pad: CGFloat = 14, iconSize: CGFloat = 16, rowH: CGFloat = 24
+    private let pad: CGFloat = 14, iconSize: CGFloat = 16, rowH: CGFloat = 38
+    private let upperY: CGFloat = 19, lowerY: CGFloat = 3, detailSize: CGFloat = 12  // the two text lines
     private let highlightView = NSVisualEffectView()  // system selection material = exact native highlight
     private var hovered = false
     private var iconBaseTint: NSColor?       // tint when not hovered (template icons); white on hover
     private var pillNormal: NSImage?, pillSelected: NSImage?
-    private var nameText = "", branchText = ""
+    private var nameText = "", branchText = "", titleText = ""
 
     init(id: String, width: CGFloat) {
         self.id = id
@@ -144,6 +147,10 @@ final class SessionRowView: NSView {
         nameField.frame = NSRect(x: pad + iconSize + 8, y: (rowH - 16) / 2, width: 160, height: 16)
         nameField.autoresizingMask = [.maxXMargin]
         addSubview(nameField)
+        detailField.lineBreakMode = .byTruncatingTail
+        detailField.autoresizingMask = [.maxXMargin]
+        detailField.isHidden = true
+        addSubview(detailField)
         timerField.font = NSFont.monospacedSystemFont(ofSize: NSFont.menuFont(ofSize: 0).pointSize, weight: .regular)
         timerField.textColor = .secondaryLabelColor
         timerField.alignment = .right
@@ -155,7 +162,7 @@ final class SessionRowView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func configure(icon: NSImage?, iconTint: NSColor?, spinning: Bool, name: String, branch: String, timer: String?,
+    func configure(icon: NSImage?, iconTint: NSColor?, spinning: Bool, name: String, branch: String, title: String, timer: String?,
                    pillNormal: NSImage?, pillSelected: NSImage?, pillInset: CGFloat, timerGap: CGFloat) {
         let w = bounds.width
         iconView.image = icon
@@ -170,35 +177,44 @@ final class SessionRowView: NSView {
             spinner.isHidden = true
             iconView.isHidden = false
         }
-        nameText = name; branchText = branch
+        nameText = name; branchText = branch; titleText = title
         renderName()
+        // With a title, the folder, timer and pill share line two so the title gets the full width.
+        let hasTitle = !title.isEmpty
+        let lineY = hasTitle ? lowerY : (rowH - 16) / 2
         self.pillNormal = pillNormal; self.pillSelected = pillSelected
         let pill = hovered ? pillSelected : pillNormal
         var pillLeft = w - pillInset
         if let pill = pill {
             pillView.isHidden = false
             pillView.image = pill
-            pillView.frame = NSRect(x: w - pillInset - pill.size.width, y: (rowH - pill.size.height) / 2,
+            pillView.frame = NSRect(x: w - pillInset - pill.size.width, y: lineY + (16 - pill.size.height) / 2,
                                     width: pill.size.width, height: pill.size.height)
             pillLeft = pillView.frame.minX
         } else { pillView.isHidden = true }
         if let timer = timer {
             timerField.isHidden = false
             timerField.stringValue = timer
+            timerField.font = NSFont.monospacedSystemFont(ofSize: hasTitle ? detailSize : NSFont.menuFont(ofSize: 0).pointSize, weight: .regular)
             // Fit the column to the text (mono font, right edge anchored at the pill): a fixed-width
             // column reserved ~50pt of blank space that pixel-truncated the name · branch next to it.
             let font = timerField.font ?? NSFont.monospacedSystemFont(ofSize: NSFont.menuFont(ofSize: 0).pointSize, weight: .regular)
             let tw = ceil(timer.size(withAttributes: [.font: font]).width) + 2
-            // Same point size and same box (y/height) as the name field, so the timer sits on the name's
-            // baseline instead of floating at the row's vertical center.
-            timerField.frame = NSRect(x: pillLeft - timerGap - tw, y: (rowH - 16) / 2, width: tw, height: 16)
+            // Same point size and same box (y/height) as the text beside it, so the timer sits on that
+            // line's baseline instead of floating at the row's vertical center.
+            timerField.frame = NSRect(x: pillLeft - timerGap - tw, y: lineY, width: tw, height: 16)
         } else { timerField.isHidden = true }
         // Name stretches to whatever the timer/pill leave free (branch text made the fixed 160 tight);
         // pixel truncation via the paragraph style handles overflow.
         let nameRight = timer != nil ? timerField.frame.minX : pillLeft
-        nameField.frame.size.width = max(40, nameRight - timerGap - nameField.frame.minX)
+        let textX = nameField.frame.minX, lineWidth = max(40, nameRight - timerGap - textX)
+        detailField.isHidden = !hasTitle
+        detailField.frame = NSRect(x: textX, y: lowerY, width: lineWidth, height: 16)
+        nameField.frame = hasTitle ? NSRect(x: textX, y: upperY, width: max(40, w - pillInset - textX), height: 16)
+                                   : NSRect(x: textX, y: lineY, width: lineWidth, height: 16)
     }
-    // name in the label color, " · branch" dimmed — mirrored on hover, where setting textColor
+    // The title in the label color and the dimmed folder · branch under it, or with no title the
+    // folder in the label color and " · branch" dimmed. Mirrored on hover, where setting textColor
     // can't restyle an attributed string.
     private func renderName() {
         let para = NSMutableParagraphStyle()
@@ -207,18 +223,25 @@ final class SessionRowView: NSView {
         // tightening"), so the same name renders visibly squished on a row whose timer narrows the
         // field. Constant tracking on every row; overflow shows an honest ellipsis instead.
         para.allowsDefaultTighteningForTruncation = false
-        let font = NSFont.menuFont(ofSize: 0)
-        let text = NSMutableAttributedString(string: nameText, attributes: [
-            .font: font, .paragraphStyle: para,
-            .foregroundColor: hovered ? NSColor.white : .labelColor,
+        let font = NSFont.menuFont(ofSize: 0), detailFont = NSFont.menuFont(ofSize: detailSize)
+        let primary: NSColor = hovered ? .white : .labelColor
+        let dimmed: NSColor = hovered ? NSColor.white.withAlphaComponent(0.75) : .secondaryLabelColor
+        let hasTitle = !titleText.isEmpty
+        let folder = NSMutableAttributedString(string: nameText, attributes: [
+            .font: hasTitle ? detailFont : font, .paragraphStyle: para,
+            .foregroundColor: hasTitle ? dimmed : primary,
         ])
         if !branchText.isEmpty {
-            text.append(NSAttributedString(string: " · " + branchText, attributes: [
-                .font: font, .paragraphStyle: para,
-                .foregroundColor: hovered ? NSColor.white.withAlphaComponent(0.75) : .secondaryLabelColor,
+            folder.append(NSAttributedString(string: " · " + branchText, attributes: [
+                .font: hasTitle ? detailFont : font, .paragraphStyle: para,
+                .foregroundColor: dimmed,
             ]))
         }
-        nameField.attributedStringValue = text
+        guard hasTitle else { nameField.attributedStringValue = folder; return }
+        nameField.attributedStringValue = NSAttributedString(string: titleText, attributes: [
+            .font: font, .paragraphStyle: para, .foregroundColor: primary,
+        ])
+        detailField.attributedStringValue = folder
     }
     // Custom views don't get the menu's automatic hover highlight, so draw it ourselves.
     override func updateTrackingAreas() {
@@ -373,6 +396,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     // step re-rasterized identical images at fps. Cleared when the style or color changes.
     var iconCache: [String: NSImage] = [:]
     var turnLineCache: [String: (mtime: Date?, line: String?)] = [:]
+    var titleCache: [String: (mtime: Date?, title: String)] = [:]
     var desktopRunning = false
 
     let brand = NSColor(srgbRed: 0.851, green: 0.467, blue: 0.341, alpha: 1) // #d97757, Anthropic's official "Orange" accent
@@ -878,18 +902,20 @@ final class StatusController: NSObject, NSMenuDelegate {
         let working = (eff == "thinking" || eff == "tool") && s.startedAt > 0
         let resting = !(eff == "permission" || eff == "thinking" || eff == "tool")  // the dim caret
         let tag = surfaceTag(s.entrypoint)
+        let title = cachedTitle(s.transcript)
         v.configure(icon: sessionSymbol(s, eff: eff),
                     iconTint: resting ? .tertiaryLabelColor : .labelColor,  // caret dim; spinner matches the name font; amber image ignores tint
                     spinning: (eff == "thinking" || eff == "tool"),
                     name: truncated(sessionName(s), max: nameMax, keep: nameMax),
                     branch: truncated(s.branch, max: 22, keep: 20),
+                    title: truncated(title, max: 120, keep: 120),
                     timer: working ? elapsed(max(0, Int(now - s.startedAt))) : nil,
                     pillNormal: tag.isEmpty ? nil : pillImage(tag),
                     pillSelected: tag.isEmpty ? nil : pillImage(tag, selected: true),
                     pillInset: CGFloat(cfg["pillInset"] ?? 12),
                     timerGap: CGFloat(cfg["timerGap"] ?? 10))
-        // Truncated rows stay inspectable: full name, branch, and path on hover.
-        var tip = sessionName(s)
+        // Truncated rows stay inspectable: full title, name, branch, and path on hover.
+        var tip = title.isEmpty ? sessionName(s) : title + "\n" + sessionName(s)
         if !s.branch.isEmpty { tip += " · " + s.branch }
         if !s.cwd.isEmpty { tip += "\n" + s.cwd }
         v.toolTip = tip
@@ -1349,6 +1375,36 @@ final class StatusController: NSObject, NSMenuDelegate {
     // Last actual turn line (a user/assistant message), ignoring the bookkeeping lines Claude Code
     // appends after an interrupt (system/away_summary, last-prompt, ai-title, mode, permission-mode).
     // Those would otherwise hide the "interrupted by user" marker and freeze the amber dot.
+    // The session's title: its custom-title if it has one, else Claude's ai-title. Claude Code writes
+    // both again as each turn ends, so the file's end holds them then; mid-turn a long tool result can
+    // push them out of the chunk, and cachedTitle keeps the last one it saw.
+    func lastTitle(ofFileAt path: String) -> String? {
+        guard let fh = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? fh.close() }
+        let size = (try? fh.seekToEnd()) ?? 0
+        let chunk: UInt64 = 256 * 1024
+        try? fh.seek(toOffset: size > chunk ? size - chunk : 0)
+        guard let data = try? fh.readToEnd() else { return nil }
+        let lines = data.split(separator: 10)  // on raw bytes: the chunk can start mid-character
+        for (type, key) in [("custom-title", "customTitle"), ("ai-title", "aiTitle")] {
+            let marker = Data("{\"type\":\"\(type)\"".utf8)
+            if let line = lines.last(where: { $0.starts(with: marker) }),
+               let o = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+               let title = o[key] as? String, !title.isEmpty { return title }
+        }
+        return nil
+    }
+
+    // Rows are only configured while the menu is open, so this costs nothing the rest of the time.
+    func cachedTitle(_ path: String) -> String {
+        guard !path.isEmpty else { return "" }
+        let m = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+        if let hit = titleCache[path], hit.mtime == m { return hit.title }
+        let title = lastTitle(ofFileAt: path) ?? titleCache[path]?.title ?? ""
+        titleCache[path] = (m, title)
+        return title
+    }
+
     func lastTurnLine(ofFileAt path: String) -> String? {
         guard let fh = FileHandle(forReadingAtPath: path) else { return nil }
         defer { try? fh.close() }
