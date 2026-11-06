@@ -1042,6 +1042,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     // (re-verified 2026-08-08, Claude 1.26832.0 — see the ROADMAP desktop section, issue #58).
     // CLI session: bring its terminal APP to the front (zero permission). Targeting the exact
     // window/tab needs a one-time Automation grant, deferred to the opt-in build (issue #19).
+    // Editor extension session: no terminal, so TERM_PROGRAM is empty; raise the editor that runs it.
     func openSession(_ id: String, entrypoint: String, termProgram: String) {
         if entrypoint == "claude-desktop" { openClaude(); return }
         // Map TERM_PROGRAM to a name `open -a` understands; most terminals match verbatim.
@@ -1051,13 +1052,32 @@ final class StatusController: NSObject, NSMenuDelegate {
         case "iTerm.app":      app = "iTerm"
         case "vscode":         app = "Visual Studio Code"
         case "WarpTerminal":   app = "Warp"
-        case "":               return  // unknown surface, nothing to focus
+        case "":
+            guard let pid = sessions[id]?.pid, let host = hostApp(of: pid) else { return }  // unknown surface, nothing to focus
+            app = host
         default:               app = termProgram  // Ghostty, WezTerm, Tabby, Hyper, kitty, …
         }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         p.arguments = ["-a", app]
         try? p.run()
+    }
+
+    // Path of the app that owns `pid`: its closest ancestor with a Dock presence. VS Code runs
+    // `claude` under a helper process (LSUIElement, so not .regular) under the app itself.
+    func hostApp(of pid: Int32) -> String? {
+        var p = pid
+        while p > 1 {
+            if let app = NSRunningApplication(processIdentifier: p), app.activationPolicy == .regular {
+                return app.bundleURL?.path
+            }
+            var info = kinfo_proc()
+            var size = MemoryLayout<kinfo_proc>.stride
+            var mib = [CTL_KERN, KERN_PROC, KERN_PROC_PID, p]
+            guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+            p = info.kp_eproc.e_ppid
+        }
+        return nil
     }
 
 

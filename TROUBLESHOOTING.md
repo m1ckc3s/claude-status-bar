@@ -31,7 +31,7 @@
 - Interrupting *after* answer text starts streaming recovers normally, within a poll.
 - The desktop app is unaffected. Root cause is upstream in Claude Code, not fixable from here.
 
-**Clicking a session brings the app forward, not the exact session.** Desktop sessions raise the Claude app rather than that specific conversation; terminal sessions raise your terminal app rather than that window or tab. Exact terminal focus needs a one-time Automation permission grant and lives in a test build ([#19](https://github.com/m1ckc3s/claude-status-bar/issues/19)).
+**Clicking a session brings the app forward, not the exact session.** Desktop sessions raise the Claude app rather than that specific conversation; terminal sessions raise your terminal app rather than that window or tab; VS Code extension sessions raise VS Code rather than that window. Exact terminal focus needs a one-time Automation permission grant and lives in a test build ([#19](https://github.com/m1ckc3s/claude-status-bar/issues/19)).
 
 **The app launches and tracks sessions inside Cursor.** Cursor's Third-party skills feature reads the same `~/.claude/settings.json` and runs your hooks against its own agent, so Cursor sessions show up here too. Most things work (spark, timer, rows); the amber permission dot, the CLI/APP pill and click-to-focus don't, because Cursor doesn't pass those events. To turn it off, disable **Third-party skills** in Cursor's Settings → Features. Your Claude Code usage is unaffected.
 
